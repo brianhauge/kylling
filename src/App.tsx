@@ -136,6 +136,7 @@ const STARS = Array.from({ length: 45 }, (_, i) => ({
 
 // From this level on storm clouds keep falling through the screen.
 const CLOUD_LEVEL = 2;
+const CLOUD_END_LEVEL = 5; // ...and stop again from this level
 const CLOUD_WIDTH = 70;
 const CLOUD_HEIGHT = 32;
 const CLOUD_SPEED = 2.5; // px per frame downwards
@@ -355,7 +356,14 @@ function App() {
 
       // Storm cloud: from level 2 one appears above the screen at a random
       // place and travels straight down, all the way through the picture.
-      if (levelForScore(scoreRef.current) >= CLOUD_LEVEL) {
+      // From level 5 the storm clouds are gone again.
+      const cloudLevel = levelForScore(scoreRef.current);
+      if (cloudLevel >= CLOUD_END_LEVEL) {
+        if (cloudRef.current) {
+          cloudRef.current = null;
+          setCloud(null);
+        }
+      } else if (cloudLevel >= CLOUD_LEVEL) {
         const cloud = cloudRef.current;
         if (!cloud) {
           cloudDelay.current -= 1;
