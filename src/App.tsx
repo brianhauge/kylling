@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Egg, Circle, Heart } from 'lucide-react';
+import { Egg, Heart } from 'lucide-react';
+import chickImage from './assets/chick.png';
 import bunnyImage from './assets/bunny.png';
 
 interface Position {
@@ -458,7 +459,7 @@ function App() {
 
         {/* Player: leans slightly into the direction of travel */}
         <div
-          className="absolute"
+          className="absolute w-10 h-10"
           style={{
             transform: `translate(${player.x}px, ${player.y}px) rotate(${player.vx * 2}deg)`,
             // Blinks while invulnerable after being hit by the bunny
@@ -516,27 +517,14 @@ function App() {
               <circle cx="37.5" cy="13" r="1.7" fill="#111827" />
             </svg>
           ) : (
-          <div className="relative w-10 h-10" style={{ transform: `scaleX(${player.facing})` }}>
-            {/* Body */}
-            <Circle className="w-10 h-10 text-yellow-300 fill-yellow-300" />
-
-            {/* Beak */}
-            <div className="absolute top-3 left-8 w-4 h-4">
-              <div className="w-0 h-0 border-t-[6px] border-t-transparent border-l-[12px] border-l-orange-500 border-b-[6px] border-b-transparent" />
-            </div>
-
-            {/* Eye */}
-            <div className="absolute top-2 left-6 w-2 h-2 bg-black rounded-full" />
-
-            {/* Comb */}
-            <div className="absolute -top-2 left-3 w-4 h-4">
-              <div className="w-0 h-0 border-b-[10px] border-b-red-500 border-l-[5px] border-l-transparent border-r-[5px] border-r-transparent" />
-            </div>
-
-            {/* Feet */}
-            <div className="absolute -bottom-2 left-2 w-2 h-3 bg-orange-500" />
-            <div className="absolute -bottom-2 left-6 w-2 h-3 bg-orange-500" />
-          </div>
+            // Starter chick: drawn a little taller than the hitbox, feet on the ground
+            <img
+              src={chickImage}
+              alt="Chick"
+              draggable={false}
+              className="absolute max-w-none select-none"
+              style={{ left: 0, top: -8, width: 40, height: 52, transform: `scaleX(${player.facing})` }}
+            />
           )}
         </div>
 
