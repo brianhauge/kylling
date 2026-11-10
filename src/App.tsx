@@ -112,7 +112,22 @@ const MOVING_PLATFORMS_LEVEL = 4;
 const PLATFORM_TRAVEL = 30; // px above and below the resting height
 const PLATFORM_PERIOD_FRAMES = 200;
 
-const restingPlatformYs = () => PLATFORMS.map(p => p.y);
+// From this level on a storm cloud keeps crossing the screen.
+const CLOUD_LEVEL = 2;
+const CLOUD_WIDTH = 70;
+const CLOUD_HEIGHT = 32;
+const CLOUD_SPEED = 2.5; // px per frame sideways
+const CLOUD_DESCENT_SPEED = 3; // px per frame while dropping in from the sky
+const CLOUD_MIN_Y = 110; // Highest and lowest flight height. Even the lowest
+const CLOUD_MAX_Y = 240; // passes above a player standing on the ground.
+const CLOUD_PAUSE_FRAMES = 90; // Wait between one cloud leaving and the next
+
+interface StormCloud extends GameObject {
+  dir: number; // 1 = drifting right, -1 = drifting left
+  laneY: number; // Flight height it settles at
+}
+
+const restingPlatformYs =() => PLATFORMS.map(p => p.y);
 const levelForScore = (score: number) => Math.floor(score / POINTS_PER_LEVEL) + 1;
 const initialBunny = (): GameObject => ({ x: 700, y: GROUND_LEVEL, width: 40, height: 40 });
 
@@ -139,6 +154,9 @@ function App() {
   const graceFrames = useRef(0);
   const platformYsRef = useRef<number[]>(restingPlatformYs());
   const platformClock = useRef(0);
+  const cloudRef = useRef<StormCloud | null>(null);
+  const cloudDelay = useRef(CLOUD_PAUSE_FRAMES);
+  const [cloud, setCloud] = useState<StormCloud | null>(null);
 
   const [player, setPlayer] = useState({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, blink: false });
   const [lives, setLives] = useState(MAX_LIVES);
@@ -303,8 +321,39 @@ function App() {
         setScore(scoreRef.current);
       }
 
-      // Check bunny collision: each hit costs a heart, the last one ends the game.
-      if (graceFrames.current === 0 && overlaps(hitbox, bunnyRef.current)) {
+      // Storm cloud: from level 2 one drops in from the sky at a random side
+      // and height, then drifts all the way across the screen.
+      if (levelForScore(scoreRef.current) >= CLOUD_LEVEL) {
+        const cloud = cloudRef.current;
+        if (!cloud) {
+          cloudDelay.current -= 1;
+          if (cloudDelay.current <= 0) {
+            const dir = Math.random() < 0.5 ? 1 : -1;
+            cloudRef.current = {
+              x: dir === 1 ? -CLOUD_WIDTH : WORLD_WIDTH,
+              y: -CLOUD_HEIGHT,
+              width: CLOUD_WIDTH,
+              height: CLOUD_HEIGHT,
+              dir,
+              laneY: CLOUD_MIN_Y + Math.random() * (CLOUD_MAX_Y - CLOUD_MIN_Y),
+            };
+          }
+        } else {
+          const x = cloud.x + cloud.dir * CLOUD_SPEED;
+          const gone = x < -CLOUD_WIDTH || x > WORLD_WIDTH;
+          cloudRef.current = gone
+            ? null
+            : { ...cloud, x, y: Math.min(cloud.laneY, cloud.y + CLOUD_DESCENT_SPEED) };
+          if (gone) cloudDelay.current = CLOUD_PAUSE_FRAMES;
+        }
+        setCloud(cloudRef.current);
+      }
+
+      // Check bunny and cloud collisions: each hit costs a heart, the last one ends the game.
+      const touchingEnemy =
+        overlaps(hitbox, bunnyRef.current) ||
+        (cloudRef.current !== null && overlaps(hitbox, cloudRef.current));
+      if (graceFrames.current === 0 && touchingEnemy) {
         livesRef.current -= 1;
         setLives(livesRef.current);
         if (livesRef.current <= 0) {
@@ -332,6 +381,9 @@ function App() {
     graceFrames.current = 0;
     platformClock.current = 0;
     platformYsRef.current = restingPlatformYs();
+    cloudRef.current = null;
+    cloudDelay.current = CLOUD_PAUSE_FRAMES;
+    setCloud(null);
     setPlayer({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, blink: false });
     setLives(MAX_LIVES);
     setPlatformYs(platformYsRef.current);
@@ -580,6 +632,33 @@ function App() {
             <circle cx="0" cy="0" r="2.5" fill="#facc15" />
           </svg>
         </div>
+
+        {/* Storm cloud */}
+        {cloud && (
+          <svg
+            className="absolute"
+            style={{ transform: `translate(${cloud.x}px, ${cloud.y}px)`, left: -5, top: -8 }}
+            width="80"
+            height="62"
+            viewBox="0 0 80 62"
+            role="img"
+            aria-label="Storm cloud"
+          >
+            {/* Lightning bolt */}
+            <path d="M42 38 L33 50 H40 L36 61 L50 46 H42 L47 38 Z" fill="#facc15" stroke="#ca8a04" strokeWidth="1" />
+            {/* Cloud body */}
+            <g fill="#475569" stroke="#1e293b" strokeWidth="1.5">
+              <path d="M18 40 Q5 40 5 29 Q5 19 16 18 Q18 6 32 6 Q42 6 46 13 Q52 9 60 12 Q68 15 67 23 Q76 25 75 33 Q74 40 64 40 Z" />
+            </g>
+            {/* Angry eyes */}
+            <g stroke="#f8fafc" strokeWidth="2" strokeLinecap="round">
+              <path d="M27 21 L34 24" />
+              <path d="M52 21 L45 24" />
+            </g>
+            <circle cx="31" cy="27" r="2" fill="#f8fafc" />
+            <circle cx="48" cy="27" r="2" fill="#f8fafc" />
+          </svg>
+        )}
 
         {/* Game Over Screen */}
         {gameOver && (
