@@ -20,6 +20,14 @@ const WORLD_WIDTH = 800;
 const WORLD_HEIGHT = 400;
 const PLAYER_SIZE = 40;
 
+// How much the 800×400 game is enlarged: as big as fits, leaving a small margin.
+const SCREEN_FILL = 0.94;
+const fitScale = () =>
+  Math.max(
+    0.4,
+    Math.min(window.innerWidth / WORLD_WIDTH, window.innerHeight / WORLD_HEIGHT) * SCREEN_FILL
+  );
+
 // Vertical movement
 const GRAVITY = 0.6;
 const JUMP_FORCE = -14; // Peak height ≈ JUMP_FORCE² / (2 × GRAVITY) ≈ 163px
@@ -179,6 +187,14 @@ function App() {
   const level = levelForScore(score);
   const isHen = level >= HEN_LEVEL;
   const isNight = level >= NIGHT_LEVEL;
+
+  // Scale the game to fill most of the window, keeping its 2:1 shape.
+  const [scale, setScale] = useState(fitScale);
+  useEffect(() => {
+    const onResize = () => setScale(fitScale());
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
 
   // Briefly announce each new level.
   useEffect(() => {
@@ -418,8 +434,13 @@ function App() {
   }, [gameOver]);
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-sky-300 to-sky-100 flex items-center justify-center">
-      <div className="relative w-[800px] h-[400px] bg-gradient-to-b from-sky-400 to-sky-100 rounded-lg shadow-2xl overflow-hidden">
+    <div className="h-screen bg-gradient-to-b from-sky-300 to-sky-100 flex items-center justify-center overflow-hidden">
+      {/* The game is always simulated at 800×400 and scaled up to fit the window */}
+      <div style={{ width: WORLD_WIDTH * scale, height: WORLD_HEIGHT * scale }}>
+      <div
+        className="relative w-[800px] h-[400px] bg-gradient-to-b from-sky-400 to-sky-100 rounded-lg shadow-2xl overflow-hidden"
+        style={{ transform: `scale(${scale})`, transformOrigin: 'top left' }}
+      >
         {/* Background scenery: sun, clouds, distant mountains and rolling hills */}
         <svg
           className="absolute inset-0 w-full h-full pointer-events-none"
@@ -866,6 +887,7 @@ function App() {
             Use <span className="font-bold">←→</span> to move
           </p>
         </div>
+      </div>
       </div>
     </div>
   );
