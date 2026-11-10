@@ -45,7 +45,10 @@ const PLATFORMS: Platform[] = [
 
 interface EggItem extends Position {
   gold?: boolean;
+  red?: boolean;
 }
+
+const RED_EGG_INTERVAL = 15; // Every 15th egg is red and gives a lost heart back
 
 const POINTS_PER_LEVEL = 20;
 const HEN_LEVEL = 3; // From this level on the chick has grown into a hen
@@ -309,19 +312,25 @@ function App() {
       // Check egg collisions
       const remaining = eggsRef.current.filter(egg => !overlaps(hitbox, egg));
       if (remaining.length < eggsRef.current.length) {
-        const points = eggsRef.current
-          .filter(egg => !remaining.includes(egg))
-          .reduce((sum, egg) => sum + (egg.gold ? GOLD_EGG_POINTS : 1), 0);
+        const taken = eggsRef.current.filter(egg => !remaining.includes(egg));
+        const points = taken.reduce((sum, egg) => sum + (egg.gold ? GOLD_EGG_POINTS : 1), 0);
+        // A red egg heals one lost heart (it does nothing extra at full health).
+        if (taken.some(egg => egg.red) && livesRef.current < MAX_LIVES) {
+          livesRef.current += 1;
+          setLives(livesRef.current);
+        }
         eggsRef.current = remaining;
         // All eggs collected: lay a fresh batch somewhere else and keep playing.
         if (remaining.length === 0) {
           const spots = nextEggs(lastBatch.current, hitbox);
           lastBatch.current = spots;
-          // Every fourth egg laid since the start of the game is a golden one.
-          eggsRef.current = spots.map(spot => ({
-            ...spot,
-            gold: ++eggsLaid.current % GOLD_EGG_INTERVAL === 0,
-          }));
+          // Counting every egg laid since the start of the game: each 15th is
+          // red, and each fourth is golden (red wins when both apply).
+          eggsRef.current = spots.map(spot => {
+            const number = ++eggsLaid.current;
+            const red = number % RED_EGG_INTERVAL === 0;
+            return { ...spot, red, gold: !red && number % GOLD_EGG_INTERVAL === 0 };
+          });
         }
         setEggs(eggsRef.current);
         scoreRef.current += points;
@@ -754,7 +763,9 @@ function App() {
           >
             <Egg
               className={
-                egg.gold
+                egg.red
+                  ? 'w-8 h-8 text-red-700 fill-red-500 drop-shadow-[0_0_6px_rgba(239,68,68,0.9)]'
+                  : egg.gold
                   ? 'w-8 h-8 text-yellow-600 fill-yellow-400 drop-shadow-[0_0_6px_rgba(250,204,21,0.9)]'
                   : 'w-8 h-8 text-white'
               }
