@@ -10,7 +10,7 @@ export const SHOP_ITEMS: ShopItem[] = [
   { id: 'bow', name: 'Bow', price: 10 },
   { id: 'earring', name: 'Earring', price: 15 },
   { id: 'hat', name: 'Hat', price: 20 },
-  { id: 'follower', name: 'Chick that follows you', price: 100 },
+  { id: 'follower', name: 'Chick that follows you', price: 50 },
 ];
 
 // What is kept between games (and between visits): the money and the wardrobe.
