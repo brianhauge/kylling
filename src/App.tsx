@@ -697,7 +697,7 @@ function App() {
               alt="Chick"
               draggable={false}
               className="absolute max-w-none select-none"
-              style={{ left: 0, top: -8, width: 40, height: 52, transform: `scaleX(${player.facing})` }}
+              style={{ left: 2, top: -10, width: 36, height: 54, transform: `scaleX(${player.facing})` }}
             />
           )}
 
@@ -715,10 +715,12 @@ function App() {
             >
               {(isHen
                 ? [{ x: player.facing === 1 ? 33.5 : 6.5, y: 17 }]
-                : [
-                    { x: 11.5, y: 28 },
-                    { x: 27.5, y: 28 },
-                  ]
+                : // The chick picture looks to the right, so its eyes sit at
+                  // different heights and swap sides when it turns around.
+                  [
+                    { x: 9.5, y: 24 },
+                    { x: 25.5, y: 20 },
+                  ].map(eye => ({ x: player.facing === 1 ? eye.x : 40 - eye.x, y: eye.y }))
               ).flatMap((eye, eyeIndex) =>
                 [0, 0.3].map(delay => (
                   <circle
