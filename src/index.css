@@ -1,3 +1,18 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* The figure after drinking from the water bottle: its colours cycle through
+   the rainbow. Sepia first, so that the white hen takes on colour too. */
+@keyframes rainbow {
+  from {
+    filter: sepia(1) saturate(5) hue-rotate(0deg);
+  }
+  to {
+    filter: sepia(1) saturate(5) hue-rotate(360deg);
+  }
+}
+
+.rainbow {
+  animation: rainbow 1.6s linear infinite;
+}

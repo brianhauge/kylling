@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Egg, Heart } from 'lucide-react';
 import chickImage from './assets/chick.png';
 import { Coin, Shop, Wearables } from './Shop';
-import { KnifeIcon, Signpost } from './Props';
+import { Fisher, KnifeIcon, Signpost, WaterBottle } from './Props';
 import { ItemId, SHOP_ITEMS, SaveData, loadSave, storeSave } from './shopData';
 import bunnyImage from './assets/bunny.png';
 
@@ -143,6 +143,10 @@ const ROOM_ROW: Room[] = [MEADOW, TRAMPOLINE_PLACE, BEACH]; // Left to right
 
 const BEACH_WATER_X = WORLD_WIDTH / 2; // Sand to the left of this, water to the right
 const WADING_SPEED = 2.5; // Top speed in the water (half the normal speed)
+const SUNBURN_OPACITY = 0.75; // How strong the red tint is when fully red
+const SUNBURN_FRAMES = 300; // The head takes 5 seconds to turn fully red at the beach
+const FISHER_X = 290; // The fisher stands on the sand at the water's edge
+const WATER_BOTTLE: Position = { x: 240, y: 312 }; // Next to the fisher
 const FLIP_DEGREES_PER_FRAME = 15; // The somersault takes 24 frames
 
 // `y` is where the feet of the 40px player box come to rest.
@@ -251,7 +255,7 @@ function App() {
       return { ...s, wearing };
     });
 
-  const [player, setPlayer] = useState({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0, flip: 0 });
+  const [player, setPlayer] = useState({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0, flip: 0, heat: 0 });
 
   // Which place the player is in, the walking cycle, and the level in which
   // the blue egg was last taken (its bonus lasts for the rest of that level).
@@ -269,6 +273,12 @@ function App() {
   const [hasKnife, setHasKnife] = useState(false);
   const bunnyAliveRef = useRef(true);
   const [bunnyAlive, setBunnyAlive] = useState(true);
+
+  // The beach: the head slowly turns red in the sun, until the water bottle
+  // by the fisher is picked up, which turns the figure rainbow-coloured.
+  const heatRef = useRef(0); // 0 = normal, 1 = fully red
+  const rainbowRef = useRef(false);
+  const [rainbow, setRainbow] = useState(false);
   const [lives, setLives] = useState(MAX_LIVES);
   const [platformYs, setPlatformYs] = useState<number[]>(platformYsRef.current);
   const [eggs, setEggs] = useState<EggItem[]>(eggsRef.current);
@@ -493,6 +503,23 @@ function App() {
       if (b.onGround && Math.abs(b.vx) > 0.3) stepRef.current += Math.abs(b.vx) * WALK_CYCLE_SPEED;
       else stepRef.current = 0;
 
+      // Beach: the head goes red over five seconds in the sun and cools off
+      // again elsewhere. Picking up the water bottle ends that for this game
+      // and makes the figure rainbow-coloured instead.
+      const atBeach = roomRef.current === BEACH;
+      if (
+        atBeach &&
+        !rainbowRef.current &&
+        overlaps({ x: b.x, y: b.y, width: PLAYER_SIZE, height: PLAYER_SIZE }, WATER_BOTTLE)
+      ) {
+        rainbowRef.current = true;
+        setRainbow(true);
+      }
+      const heating = atBeach && !rainbowRef.current;
+      heatRef.current = rainbowRef.current
+        ? 0
+        : Math.max(0, Math.min(1, heatRef.current + (heating ? 1 : -1) / SUNBURN_FRAMES));
+
       if (graceFrames.current > 0) graceFrames.current -= 1;
       const crying = graceFrames.current > 0;
       setPlayer(p => ({
@@ -503,6 +530,7 @@ function App() {
         crying,
         step: stepRef.current,
         flip: b.flip * b.flipDir,
+        heat: heatRef.current,
       }));
 
       const hitbox: GameObject = { x: b.x, y: b.y, width: PLAYER_SIZE, height: PLAYER_SIZE };
@@ -702,9 +730,12 @@ function App() {
     setKnife(null);
     hasKnifeRef.current = false;
     setHasKnife(false);
+    heatRef.current = 0;
+    rainbowRef.current = false;
+    setRainbow(false);
     bunnyAliveRef.current = true;
     setBunnyAlive(true);
-    setPlayer({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0, flip: 0 });
+    setPlayer({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0, flip: 0, heat: 0 });
     setLives(MAX_LIVES);
     setPlatformYs(platformYsRef.current);
     setEggs(eggsRef.current);
@@ -1126,6 +1157,35 @@ function App() {
           </>
         )}
 
+        {/* The fisher at the beach, offering water, with the water bottle beside him */}
+        {room === BEACH && (
+          <>
+            <Fisher x={FISHER_X} />
+            {!rainbow && (
+              <>
+                <div
+                  className="absolute bg-white text-gray-800 text-sm font-semibold px-3 py-1.5 rounded-2xl shadow-md whitespace-nowrap"
+                  style={{ left: FISHER_X - 70, top: 198 }}
+                  role="note"
+                >
+                  Would you like some water?
+                  {/* Tail of the speech bubble */}
+                  <span
+                    className="absolute bg-white"
+                    style={{ left: 96, bottom: -5, width: 12, height: 12, transform: 'rotate(45deg)' }}
+                  />
+                </div>
+                <div
+                  className="absolute"
+                  style={{ transform: `translate(${WATER_BOTTLE.x}px, ${WATER_BOTTLE.y}px)` }}
+                >
+                  <WaterBottle />
+                </div>
+              </>
+            )}
+          </>
+        )}
+
         {/* Knife to pick up */}
         {room === MEADOW && knife && (
           <div className="absolute" style={{ transform: `translate(${knife.x}px, ${knife.y}px)` }}>
@@ -1149,7 +1209,7 @@ function App() {
 
         {/* Player: leans slightly into the direction of travel */}
         <div
-          className="absolute w-10 h-10"
+          className={`absolute w-10 h-10${rainbow ? ' rainbow' : ''}`}
           style={{
             transform: `translate(${player.x}px, ${player.y}px) rotate(${player.vx * 2 + player.flip}deg)`,
           }}
@@ -1191,6 +1251,15 @@ function App() {
                 stroke="#a16207"
                 strokeWidth="1.2"
                 strokeLinejoin="round"
+              />
+              {/* Head going red in the sun at the beach */}
+              <circle
+                data-sunburn
+                cx="36"
+                cy="13.5"
+                r="6.6"
+                fill="#ef4444"
+                opacity={player.heat * SUNBURN_OPACITY}
               />
               {/* Comb */}
               <g fill="#ef4444">
@@ -1250,6 +1319,29 @@ function App() {
                 draggable={false}
                 className="absolute max-w-none select-none"
                 style={{ left: 2, top: -10, width: 36, height: 54, clipPath: 'inset(0 0 15% 0)' }}
+              />
+              {/* Head going red in the sun at the beach: a red tint in the shape
+                  of the picture, fading out below the head */}
+              <div
+                data-sunburn
+                className="absolute pointer-events-none"
+                style={{
+                  left: 2,
+                  top: -10,
+                  width: 36,
+                  height: 54,
+                  backgroundColor: '#ef4444',
+                  opacity: player.heat * SUNBURN_OPACITY,
+                  mixBlendMode: 'multiply',
+                  maskImage: `url(${chickImage}), linear-gradient(#000 50%, transparent 60%)`,
+                  maskSize: '100% 100%',
+                  maskRepeat: 'no-repeat',
+                  maskComposite: 'intersect',
+                  WebkitMaskImage: `url(${chickImage}), linear-gradient(#000 50%, transparent 60%)`,
+                  WebkitMaskSize: '100% 100%',
+                  WebkitMaskRepeat: 'no-repeat',
+                  WebkitMaskComposite: 'source-in',
+                }}
               />
               {/* Eyes: glow red while holding the knife */}
               {hasKnife && (
