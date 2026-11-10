@@ -105,13 +105,23 @@ const initialBody = () => ({
   platform: null as number | null, // Index of the platform being stood on
 });
 
-const MAX_LIVES = 2;
+const MAX_LIVES = 3;
 const HIT_GRACE_FRAMES = 120; // Invulnerable (and crying) for 2 seconds after a hit
 
 // From this level on the platforms bob up and down.
 const MOVING_PLATFORMS_LEVEL = 4;
 const PLATFORM_TRAVEL = 30; // px above and below the resting height
 const PLATFORM_PERIOD_FRAMES = 200;
+
+// From this level on it is night: the sun sets, the moon rises, the sky
+// turns dark, the background clouds fade away and the stars come out.
+const NIGHT_LEVEL = 4;
+const NIGHT_TRANSITION = 'opacity 3s ease-in-out, transform 3s ease-in-out';
+const STARS = Array.from({ length: 45 }, (_, i) => ({
+  x: (i * 173.3 + 40) % 800,
+  y: (i * 97.7 + 15) % 230,
+  r: 0.8 + (i % 3) * 0.5,
+}));
 
 // From this level on storm clouds keep falling through the screen.
 const CLOUD_LEVEL = 2;
@@ -165,6 +175,7 @@ function App() {
   // The level follows directly from the score: one level per 20 points.
   const level = levelForScore(score);
   const isHen = level >= HEN_LEVEL;
+  const isNight = level >= NIGHT_LEVEL;
 
   // Briefly announce each new level.
   useEffect(() => {
@@ -412,16 +423,72 @@ function App() {
               <stop offset="0%" stopColor="#fde047" stopOpacity="0.7" />
               <stop offset="100%" stopColor="#fde047" stopOpacity="0" />
             </radialGradient>
+            <radialGradient id="moonGlow">
+              <stop offset="0%" stopColor="#fef9c3" stopOpacity="0.5" />
+              <stop offset="100%" stopColor="#fef9c3" stopOpacity="0" />
+            </radialGradient>
+            <linearGradient id="nightSky" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#0f172a" />
+              <stop offset="100%" stopColor="#312e81" />
+            </linearGradient>
           </defs>
 
-          {/* Sun */}
-          <circle cx="540" cy="70" r="75" fill="url(#sunGlow)" />
-          <circle cx="540" cy="70" r="30" fill="#fde047" />
+          {/* Night sky: fades in over the daytime sky from level 4 */}
+          <rect
+            width="800"
+            height="400"
+            fill="url(#nightSky)"
+            style={{ opacity: isNight ? 1 : 0, transition: NIGHT_TRANSITION }}
+          />
 
-          {/* Clouds */}
+          {/* Stars */}
+          <g fill="#ffffff" style={{ opacity: isNight ? 1 : 0, transition: NIGHT_TRANSITION }}>
+            {STARS.map((star, i) => (
+              <circle key={i} cx={star.x} cy={star.y} r={star.r}>
+                {/* Every third star twinkles */}
+                {i % 3 === 0 && (
+                  <animate
+                    attributeName="opacity"
+                    values="1;0.25;1"
+                    dur={`${2 + (i % 5) * 0.6}s`}
+                    repeatCount="indefinite"
+                  />
+                )}
+              </circle>
+            ))}
+          </g>
+
+          {/* Sun: sinks behind the mountains when night falls */}
+          <g
+            style={{
+              transform: isNight ? 'translateY(300px)' : 'translateY(0px)',
+              transition: NIGHT_TRANSITION,
+            }}
+          >
+            <circle cx="540" cy="70" r="75" fill="url(#sunGlow)" />
+            <circle cx="540" cy="70" r="30" fill="#fde047" />
+          </g>
+
+          {/* Moon: rises from behind the mountains when night falls */}
+          <g
+            style={{
+              transform: isNight ? 'translateY(0px)' : 'translateY(300px)',
+              transition: NIGHT_TRANSITION,
+            }}
+          >
+            <circle cx="410" cy="85" r="60" fill="url(#moonGlow)" />
+            <circle cx="410" cy="85" r="26" fill="#fef9c3" />
+            <g fill="#e7e5a8">
+              <circle cx="401" cy="77" r="5" />
+              <circle cx="419" cy="92" r="6.5" />
+              <circle cx="406" cy="98" r="3" />
+            </g>
+          </g>
+
+          {/* Clouds: fade away at night */}
           {/* Each cloud drifts from off-screen left to off-screen right and
               starts over; the negative start time spreads them out at load. */}
-          <g fill="#ffffff" opacity="0.85">
+          <g fill="#ffffff" style={{ opacity: isNight ? 0 : 0.85, transition: NIGHT_TRANSITION }}>
             <g>
               <animateTransform
                 attributeName="transform"
@@ -482,6 +549,22 @@ function App() {
             d="M0 330 L0 300 Q80 265 180 295 T380 290 T580 295 T800 285 L800 330 Z"
             fill="#4ade80"
           />
+          {/* Night tint over the mountains and hills */}
+          <rect
+            width="800"
+            height="400"
+            fill="#0f172a"
+            style={{ opacity: isNight ? 0.5 : 0, transition: NIGHT_TRANSITION }}
+            mask="url(#landMask)"
+          />
+          <mask id="landMask">
+            <path
+              d="M0 330 L0 250 L90 170 L170 240 L260 150 L370 250 L450 200 L540 260 L640 160 L740 245 L800 205 L800 330 Z"
+              fill="#ffffff"
+            />
+            <path d="M0 330 L0 270 Q100 215 220 265 T440 260 T660 250 T800 265 L800 330 Z" fill="#ffffff" />
+            <path d="M0 330 L0 300 Q80 265 180 295 T380 290 T580 295 T800 285 L800 330 Z" fill="#ffffff" />
+          </mask>
         </svg>
 
         {/* Score */}
@@ -519,7 +602,13 @@ function App() {
         )}
 
         {/* Ground */}
-        <div className="absolute bottom-0 w-full h-20 bg-gradient-to-b from-green-500 to-green-600" />
+        <div className="absolute bottom-0 w-full h-20 bg-gradient-to-b from-green-500 to-green-600">
+          {/* Night tint */}
+          <div
+            className="absolute inset-0 bg-slate-900"
+            style={{ opacity: isNight ? 0.5 : 0, transition: NIGHT_TRANSITION }}
+          />
+        </div>
 
         {/* Platforms */}
         {PLATFORMS.map((platform, index) => (
@@ -721,7 +810,8 @@ function App() {
             {/* Lightning bolt */}
             <path d="M42 38 L33 50 H40 L36 61 L50 46 H42 L47 38 Z" fill="#facc15" stroke="#ca8a04" strokeWidth="1" />
             {/* Cloud body */}
-            <g fill="#475569" stroke="#1e293b" strokeWidth="1.5">
+            {/* A light outline keeps it visible against the night sky */}
+            <g fill="#475569" stroke={isNight ? '#e2e8f0' : '#1e293b'} strokeWidth="1.5">
               <path d="M18 40 Q5 40 5 29 Q5 19 16 18 Q18 6 32 6 Q42 6 46 13 Q52 9 60 12 Q68 15 67 23 Q76 25 75 33 Q74 40 64 40 Z" />
             </g>
             {/* Angry eyes */}
