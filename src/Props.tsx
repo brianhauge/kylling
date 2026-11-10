@@ -52,6 +52,49 @@ export function Fisher({ x }: { x: number }) {
   );
 }
 
+/** The shark under the sea, 110×48, drawn facing left and mirrored when swimming right. */
+export function Shark({ x, y, dir }: { x: number; y: number; dir: number }) {
+  return (
+    <svg
+      className="absolute"
+      style={{ transform: `translate(${x}px, ${y}px) scaleX(${-dir})` }}
+      width="110"
+      height="48"
+      viewBox="0 0 110 48"
+      overflow="visible"
+      role="img"
+      aria-label="Shark"
+    >
+      {/* Tail */}
+      <path d="M84 24 L108 4 Q101 24 108 44 Z" fill="#64748b" stroke="#334155" strokeWidth="1.5" strokeLinejoin="round" />
+      {/* Back fin */}
+      <path d="M44 10 L58 -8 Q60 4 68 11 Z" fill="#64748b" stroke="#334155" strokeWidth="1.5" strokeLinejoin="round" />
+      {/* Body */}
+      <path
+        d="M2 26 Q18 6 52 8 Q78 10 92 24 Q78 40 50 42 Q20 44 2 26 Z"
+        fill="#94a3b8"
+        stroke="#334155"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      {/* Belly */}
+      <path d="M6 28 Q26 40 52 40 Q74 38 88 26 Q70 34 48 34 Q24 34 6 28 Z" fill="#f1f5f9" />
+      {/* Side fin */}
+      <path d="M46 34 L54 48 Q58 40 62 35 Z" fill="#64748b" stroke="#334155" strokeWidth="1.2" strokeLinejoin="round" />
+      {/* Gills */}
+      <g stroke="#475569" strokeWidth="1.2" strokeLinecap="round">
+        <path d="M36 18 V28" />
+        <path d="M40 18 V28" />
+        <path d="M44 18 V28" />
+      </g>
+      {/* Eye and mouth with teeth */}
+      <circle cx="18" cy="19" r="2.4" fill="#0f172a" />
+      <path d="M6 29 Q16 34 28 31" fill="none" stroke="#334155" strokeWidth="1.5" strokeLinecap="round" />
+      <path d="M9 30.5 l2 3 l2 -2.4 l2 3 l2 -2.6 l2 2.8 l2 -2.8" fill="#ffffff" stroke="#334155" strokeWidth="0.6" />
+    </svg>
+  );
+}
+
 /** The water bottle lying next to the fisher, 30×30. */
 export function WaterBottle() {
   return (

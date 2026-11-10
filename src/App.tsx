@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Egg, Heart } from 'lucide-react';
 import chickImage from './assets/chick.png';
 import { Coin, Shop, Wearables } from './Shop';
-import { Fisher, KnifeIcon, Signpost, WaterBottle } from './Props';
+import { Fisher, KnifeIcon, Shark, Signpost, WaterBottle } from './Props';
 import { ItemId, SHOP_ITEMS, SaveData, loadSave, storeSave } from './shopData';
 import bunnyImage from './assets/bunny.png';
 
@@ -138,7 +138,29 @@ const MEADOW = 0;
 const TRAMPOLINE_PLACE = 1;
 const SKY = 2;
 const BEACH = 3; // Further on past the trampoline place
-type Room = typeof MEADOW | typeof TRAMPOLINE_PLACE | typeof SKY | typeof BEACH;
+const UNDERWATER = 4; // Down in the sea off the beach
+type Room =
+  | typeof MEADOW
+  | typeof TRAMPOLINE_PLACE
+  | typeof SKY
+  | typeof BEACH
+  | typeof UNDERWATER;
+
+// Swimming under water
+const SWIM_ACCEL = 0.5;
+const SWIM_DRAG = 0.88; // Top speed works out at about 3.7 px per frame
+const SWIM_SPEED_ON_DIVE = 3;
+const SEABED_Y = 330; // The player box cannot go below this
+const SHARK = { y: 170, width: 110, height: 48 };
+const SHARK_SPEED = 2.2;
+const SEA_COINS: Position[] = [
+  { x: 70, y: 335 },
+  { x: 230, y: 95 },
+  { x: 390, y: 340 },
+  { x: 560, y: 260 },
+  { x: 710, y: 335 },
+];
+const SEA_COIN_RESPAWN_MS = 30_000; // A taken coin is back after half a minute
 const ROOM_ROW: Room[] = [MEADOW, TRAMPOLINE_PLACE, BEACH]; // Left to right
 
 const BEACH_WATER_X = WORLD_WIDTH / 2; // Sand to the left of this, water to the right
@@ -210,7 +232,7 @@ function App() {
   // The simulation lives in refs so the game loop always sees current values;
   // the state below is only what gets drawn.
   const body = useRef(initialBody());
-  const keys = useRef({ left: false, right: false, jump: false, jumpPressed: false });
+  const keys = useRef({ left: false, right: false, down: false, jump: false, jumpPressed: false });
   const eggsRef = useRef<EggItem[]>(initialEggs());
   const lastBatch = useRef<Position[]>(eggsRef.current);
   const eggsLaid = useRef(eggsRef.current.length);
@@ -278,6 +300,13 @@ function App() {
   // The beach: the head slowly turns red in the sun, until the water bottle
   // by the fisher is picked up, which turns the figure rainbow-coloured.
   const heatRef = useRef(0); // 0 = normal, 1 = fully red
+  // Under the sea: the shark, and for each coin the clock time at which it is
+  // back (0 = it is lying there now).
+  const sharkRef = useRef({ x: 500, dir: -1 });
+  const [shark, setShark] = useState(sharkRef.current);
+  const seaCoinBackAt = useRef<number[]>(SEA_COINS.map(() => 0));
+  const [seaCoinsThere, setSeaCoinsThere] = useState<boolean[]>(SEA_COINS.map(() => true));
+
   const rainbowEndsAt = useRef(0); // Clock time (ms) at which the rainbow wears off
   const [rainbowSeconds, setRainbowSeconds] = useState(0);
   const rainbow = rainbowSeconds > 0;
@@ -329,6 +358,8 @@ function App() {
         keys.current.left = down;
       } else if (e.key === 'ArrowRight') {
         keys.current.right = down;
+      } else if (e.key === 'ArrowDown') {
+        keys.current.down = down;
       } else {
         return;
       }
@@ -337,7 +368,7 @@ function App() {
     const onKeyDown = (e: KeyboardEvent) => setKey(e, true);
     const onKeyUp = (e: KeyboardEvent) => setKey(e, false);
     const releaseAll = () => {
-      keys.current = { left: false, right: false, jump: false, jumpPressed: false };
+      keys.current = { left: false, right: false, down: false, jump: false, jumpPressed: false };
     };
 
     window.addEventListener('keydown', onKeyDown);
@@ -377,6 +408,31 @@ function App() {
       const room = roomRef.current;
       let nextRoom = room;
       const dir = b.floating ? 0 : (k.right ? 1 : 0) - (k.left ? 1 : 0);
+      if (room === UNDERWATER) {
+        // Swimming: the arrow keys push in all four directions, the water
+        // slows the player down again, and there is no gravity.
+        const vertical = (k.down ? 1 : 0) - (k.jump ? 1 : 0);
+        b.vx = (b.vx + dir * SWIM_ACCEL) * SWIM_DRAG;
+        b.vy = (b.vy + vertical * SWIM_ACCEL) * SWIM_DRAG;
+        if (dir !== 0) b.facing = dir;
+        b.x = Math.max(0, Math.min(WORLD_WIDTH - PLAYER_SIZE, b.x + b.vx));
+        b.y += b.vy;
+        b.onGround = false;
+        b.platform = null;
+        b.flip = 0;
+        if (b.y < -PLAYER_SIZE / 2 && b.vy < 0) {
+          // Swimming up through the surface leads back to the sea at the beach.
+          nextRoom = BEACH;
+          b.x = Math.max(b.x, BEACH_WATER_X + PLAYER_SIZE / 2);
+          b.y = GROUND_LEVEL;
+          b.vy = 0;
+          b.onGround = true;
+        } else if (b.y > SEABED_Y) {
+          b.y = SEABED_Y;
+          b.vy = 0;
+        }
+        k.jumpPressed = false;
+      } else {
       if (b.floating) {
         b.vx = 0;
       } else if (dir !== 0) {
@@ -495,6 +551,16 @@ function App() {
         if (b.flip >= 360 || b.onGround || b.floating) b.flip = 0;
       }
 
+      // Out in the sea at the beach, the down arrow dives under the water.
+      if (room === BEACH && k.down && b.onGround && b.x + PLAYER_SIZE / 2 > BEACH_WATER_X) {
+        nextRoom = UNDERWATER;
+        b.y = 0;
+        b.vx = 0;
+        b.vy = SWIM_SPEED_ON_DIVE;
+        b.onGround = false;
+      }
+      }
+
       if (nextRoom !== room) {
         roomRef.current = nextRoom;
         setRoom(nextRoom);
@@ -502,7 +568,10 @@ function App() {
       }
 
       // Walking: the legs swing with the distance covered, and rest otherwise.
+      // Under water the legs kick whenever the player is swimming along.
+      const swimSpeed = roomRef.current === UNDERWATER ? Math.hypot(b.vx, b.vy) : 0;
       if (b.onGround && Math.abs(b.vx) > 0.3) stepRef.current += Math.abs(b.vx) * WALK_CYCLE_SPEED;
+      else if (swimSpeed > 0.3) stepRef.current += swimSpeed * WALK_CYCLE_SPEED;
       else stepRef.current = 0;
 
       // Beach: the head goes red over five seconds in the sun and cools off
@@ -555,6 +624,47 @@ function App() {
       ) {
         bonusLevelRef.current = levelNow;
         setBonusLevel(levelNow);
+      }
+
+      // Losing a heart: the last one ends the game, otherwise the player is
+      // safe for a moment (and cries).
+      const hurt = () => {
+        if (graceFrames.current > 0) return;
+        livesRef.current -= 1;
+        setLives(livesRef.current);
+        if (livesRef.current <= 0) setGameOver(true);
+        else graceFrames.current = HIT_GRACE_FRAMES;
+      };
+
+      // Under the sea: a shark swims back and forth, and there is money lying
+      // about. A coin that has been taken comes back after a while.
+      if (roomRef.current === UNDERWATER) {
+        const s = sharkRef.current;
+        let sharkX = s.x + s.dir * SHARK_SPEED;
+        let sharkDir = s.dir;
+        if (sharkX <= 0) sharkDir = 1;
+        if (sharkX >= WORLD_WIDTH - SHARK.width) sharkDir = -1;
+        sharkX = Math.max(0, Math.min(WORLD_WIDTH - SHARK.width, sharkX));
+        sharkRef.current = { x: sharkX, dir: sharkDir };
+        setShark(sharkRef.current);
+        if (overlaps(hitbox, { x: sharkX + 8, y: SHARK.y + 6, width: SHARK.width - 16, height: SHARK.height - 12 })) {
+          hurt();
+        }
+
+        let changed = false;
+        SEA_COINS.forEach((spot, i) => {
+          const backAt = seaCoinBackAt.current[i];
+          if (backAt === 0 && overlaps(hitbox, spot)) {
+            seaCoinBackAt.current[i] = now + SEA_COIN_RESPAWN_MS;
+            const value = COIN_VALUE * (bonusLevelRef.current === levelNow ? BLUE_EGG_MULTIPLIER : 1);
+            setSave(sv => ({ ...sv, coins: sv.coins + value }));
+            changed = true;
+          } else if (backAt !== 0 && now >= backAt) {
+            seaCoinBackAt.current[i] = 0;
+            changed = true;
+          }
+        });
+        if (changed) setSeaCoinsThere(seaCoinBackAt.current.map(t => t === 0));
       }
 
       // Everything below belongs to the meadow, which stands still while the
@@ -691,15 +801,7 @@ function App() {
       if (isRainbow) touchingBunny = false;
       const touchingEnemy =
         touchingBunny || (cloudRef.current !== null && overlaps(hitbox, cloudRef.current));
-      if (graceFrames.current === 0 && touchingEnemy) {
-        livesRef.current -= 1;
-        setLives(livesRef.current);
-        if (livesRef.current <= 0) {
-          setGameOver(true);
-        } else {
-          graceFrames.current = HIT_GRACE_FRAMES;
-        }
-      }
+      if (touchingEnemy) hurt();
     }, 1000 / 60);
 
     return () => clearInterval(gameLoop);
@@ -713,7 +815,7 @@ function App() {
     bunnyRef.current = initialBunny();
     bunnyDir.current = -1;
     setBunnyFacing(-1);
-    keys.current = { left: false, right: false, jump: false, jumpPressed: false };
+    keys.current = { left: false, right: false, down: false, jump: false, jumpPressed: false };
     scoreRef.current = 0;
     livesRef.current = MAX_LIVES;
     graceFrames.current = 0;
@@ -741,6 +843,10 @@ function App() {
     heatRef.current = 0;
     rainbowEndsAt.current = 0;
     setRainbowSeconds(0);
+    sharkRef.current = { x: 500, dir: -1 };
+    setShark(sharkRef.current);
+    seaCoinBackAt.current = SEA_COINS.map(() => 0);
+    setSeaCoinsThere(SEA_COINS.map(() => true));
     bunnyAliveRef.current = true;
     setBunnyAlive(true);
     setPlayer({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0, flip: 0, heat: 0 });
@@ -1026,6 +1132,65 @@ function App() {
           </svg>
         )}
 
+        {/* Under the sea: deep blue water, light from above, bubbles and a sandy bottom */}
+        {room === UNDERWATER && (
+          <svg
+            className="absolute inset-0 w-full h-full pointer-events-none"
+            viewBox="0 0 800 400"
+            preserveAspectRatio="none"
+            role="img"
+            aria-label="Under the sea"
+          >
+            <defs>
+              <linearGradient id="deepSea" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#38bdf8" />
+                <stop offset="45%" stopColor="#0369a1" />
+                <stop offset="100%" stopColor="#082f49" />
+              </linearGradient>
+            </defs>
+            <rect width="800" height="400" fill="url(#deepSea)" />
+            {/* Light rays from the surface */}
+            <g fill="#e0f2fe" opacity="0.12">
+              <path d="M120 0 L200 0 L120 400 L20 400 Z" />
+              <path d="M380 0 L440 0 L420 400 L330 400 Z" />
+              <path d="M600 0 L690 0 L780 400 L660 400 Z" />
+            </g>
+            {/* Bubbles drifting up */}
+            <g fill="none" stroke="#e0f2fe" strokeWidth="1.5" opacity="0.7">
+              {[
+                { x: 150, r: 5, dur: 7, begin: 0 },
+                { x: 165, r: 3, dur: 6, begin: -2 },
+                { x: 470, r: 4, dur: 8, begin: -5 },
+                { x: 640, r: 6, dur: 9, begin: -3 },
+                { x: 655, r: 3, dur: 6.5, begin: -1 },
+              ].map(bubble => (
+                <circle key={`${bubble.x}-${bubble.r}`} cx={bubble.x} cy="380" r={bubble.r}>
+                  <animate
+                    attributeName="cy"
+                    from="380"
+                    to="-10"
+                    dur={`${bubble.dur}s`}
+                    begin={`${bubble.begin}s`}
+                    repeatCount="indefinite"
+                  />
+                </circle>
+              ))}
+            </g>
+            {/* Sandy bottom, rocks and seaweed */}
+            <path d="M0 400 V376 Q120 364 260 378 T520 374 T800 372 V400 Z" fill="#d6b46a" />
+            <g fill="#475569">
+              <ellipse cx="310" cy="380" rx="26" ry="12" />
+              <ellipse cx="620" cy="378" rx="34" ry="14" />
+            </g>
+            <g fill="none" stroke="#15803d" strokeWidth="6" strokeLinecap="round">
+              <path d="M160 380 Q148 350 162 322 Q172 300 158 276" />
+              <path d="M178 380 Q190 356 178 334" />
+              <path d="M500 378 Q512 348 498 320 Q488 300 502 282" />
+              <path d="M760 376 Q748 350 762 326" />
+            </g>
+          </svg>
+        )}
+
         {/* Score */}
         <div className="absolute top-4 left-4 flex items-center gap-2">
           <div className="bg-white px-4 py-2 rounded-full shadow-md">
@@ -1174,6 +1339,38 @@ function App() {
               </div>
             )}
           </>
+        )}
+
+        {/* Under the sea: the shark and the money */}
+        {room === UNDERWATER && (
+          <>
+            {SEA_COINS.map(
+              (spot, i) =>
+                seaCoinsThere[i] && (
+                  <div
+                    key={i}
+                    className="absolute"
+                    style={{ transform: `translate(${spot.x}px, ${spot.y}px)` }}
+                  >
+                    <Coin />
+                  </div>
+                )
+            )}
+            <Shark x={shark.x} y={SHARK.y} dir={shark.dir} />
+            <p className="absolute bottom-1 inset-x-0 text-center text-xs font-semibold text-sky-100/90 pointer-events-none">
+              Swim with the arrow keys · swim up to the surface to get out
+            </p>
+          </>
+        )}
+
+        {/* Hint at the beach: how to get under the water */}
+        {room === BEACH && (
+          <p
+            className="absolute text-xs font-semibold text-white pointer-events-none"
+            style={{ left: BEACH_WATER_X + 130, top: 378 }}
+          >
+            Press ↓ in the water to dive
+          </p>
         )}
 
         {/* The fisher at the beach, offering water, with the water bottle beside him */}
