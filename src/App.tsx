@@ -17,6 +17,7 @@ type Platform = GameObject;
 
 const GROUND_LEVEL = 300;
 const WORLD_WIDTH = 800;
+const WORLD_HEIGHT = 400;
 const PLAYER_SIZE = 40;
 
 // Vertical movement
@@ -105,27 +106,22 @@ const initialBody = () => ({
 });
 
 const MAX_LIVES = 2;
-const HIT_GRACE_FRAMES = 120; // Invulnerable (and blinking) for 2 seconds after a hit
+const HIT_GRACE_FRAMES = 120; // Invulnerable (and crying) for 2 seconds after a hit
 
 // From this level on the platforms bob up and down.
 const MOVING_PLATFORMS_LEVEL = 4;
 const PLATFORM_TRAVEL = 30; // px above and below the resting height
 const PLATFORM_PERIOD_FRAMES = 200;
 
-// From this level on a storm cloud keeps crossing the screen.
+// From this level on storm clouds keep falling through the screen.
 const CLOUD_LEVEL = 2;
 const CLOUD_WIDTH = 70;
 const CLOUD_HEIGHT = 32;
-const CLOUD_SPEED = 2.5; // px per frame sideways
-const CLOUD_DESCENT_SPEED = 3; // px per frame while dropping in from the sky
-const CLOUD_MIN_Y = 110; // Highest and lowest flight height. Even the lowest
-const CLOUD_MAX_Y = 240; // passes above a player standing on the ground.
+const CLOUD_SPEED = 2.5; // px per frame downwards
+const CLOUD_START_Y = -70; // Starts fully above the visible area
 const CLOUD_PAUSE_FRAMES = 90; // Wait between one cloud leaving and the next
 
-interface StormCloud extends GameObject {
-  dir: number; // 1 = drifting right, -1 = drifting left
-  laneY: number; // Flight height it settles at
-}
+type StormCloud = GameObject;
 
 const restingPlatformYs =() => PLATFORMS.map(p => p.y);
 const levelForScore = (score: number) => Math.floor(score / POINTS_PER_LEVEL) + 1;
@@ -158,7 +154,7 @@ function App() {
   const cloudDelay = useRef(CLOUD_PAUSE_FRAMES);
   const [cloud, setCloud] = useState<StormCloud | null>(null);
 
-  const [player, setPlayer] = useState({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, blink: false });
+  const [player, setPlayer] = useState({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false });
   const [lives, setLives] = useState(MAX_LIVES);
   const [platformYs, setPlatformYs] = useState<number[]>(platformYsRef.current);
   const [eggs, setEggs] = useState<EggItem[]>(eggsRef.current);
@@ -284,8 +280,8 @@ function App() {
       b.y = nextY;
 
       if (graceFrames.current > 0) graceFrames.current -= 1;
-      const blink = graceFrames.current > 0 && Math.floor(graceFrames.current / 6) % 2 === 0;
-      setPlayer(p => ({ x: b.x, y: b.y, vx: b.vx, facing: dir !== 0 ? dir : p.facing, blink }));
+      const crying = graceFrames.current > 0;
+      setPlayer(p => ({ x: b.x, y: b.y, vx: b.vx, facing: dir !== 0 ? dir : p.facing, crying }));
 
       // Move bunny
       const bn = bunnyRef.current;
@@ -321,29 +317,24 @@ function App() {
         setScore(scoreRef.current);
       }
 
-      // Storm cloud: from level 2 one drops in from the sky at a random side
-      // and height, then drifts all the way across the screen.
+      // Storm cloud: from level 2 one appears above the screen at a random
+      // place and travels straight down, all the way through the picture.
       if (levelForScore(scoreRef.current) >= CLOUD_LEVEL) {
         const cloud = cloudRef.current;
         if (!cloud) {
           cloudDelay.current -= 1;
           if (cloudDelay.current <= 0) {
-            const dir = Math.random() < 0.5 ? 1 : -1;
             cloudRef.current = {
-              x: dir === 1 ? -CLOUD_WIDTH : WORLD_WIDTH,
-              y: -CLOUD_HEIGHT,
+              x: Math.random() * (WORLD_WIDTH - CLOUD_WIDTH),
+              y: CLOUD_START_Y,
               width: CLOUD_WIDTH,
               height: CLOUD_HEIGHT,
-              dir,
-              laneY: CLOUD_MIN_Y + Math.random() * (CLOUD_MAX_Y - CLOUD_MIN_Y),
             };
           }
         } else {
-          const x = cloud.x + cloud.dir * CLOUD_SPEED;
-          const gone = x < -CLOUD_WIDTH || x > WORLD_WIDTH;
-          cloudRef.current = gone
-            ? null
-            : { ...cloud, x, y: Math.min(cloud.laneY, cloud.y + CLOUD_DESCENT_SPEED) };
+          const y = cloud.y + CLOUD_SPEED;
+          const gone = y > WORLD_HEIGHT;
+          cloudRef.current = gone ? null : { ...cloud, y };
           if (gone) cloudDelay.current = CLOUD_PAUSE_FRAMES;
         }
         setCloud(cloudRef.current);
@@ -384,7 +375,7 @@ function App() {
     cloudRef.current = null;
     cloudDelay.current = CLOUD_PAUSE_FRAMES;
     setCloud(null);
-    setPlayer({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, blink: false });
+    setPlayer({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false });
     setLives(MAX_LIVES);
     setPlatformYs(platformYsRef.current);
     setEggs(eggsRef.current);
@@ -428,12 +419,47 @@ function App() {
           <circle cx="540" cy="70" r="30" fill="#fde047" />
 
           {/* Clouds */}
+          {/* Each cloud drifts from off-screen left to off-screen right and
+              starts over; the negative start time spreads them out at load. */}
           <g fill="#ffffff" opacity="0.85">
-            <ellipse cx="250" cy="70" rx="38" ry="13" />
-            <ellipse cx="275" cy="60" rx="24" ry="13" />
-            <ellipse cx="420" cy="115" rx="30" ry="10" />
-            <ellipse cx="438" cy="107" rx="18" ry="10" />
-            <ellipse cx="690" cy="140" rx="34" ry="11" />
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="translate"
+                from="-70 0"
+                to="860 0"
+                dur="70s"
+                begin="-24s"
+                repeatCount="indefinite"
+              />
+              <ellipse cx="0" cy="70" rx="38" ry="13" />
+              <ellipse cx="25" cy="60" rx="24" ry="13" />
+            </g>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="translate"
+                from="-70 0"
+                to="860 0"
+                dur="95s"
+                begin="-50s"
+                repeatCount="indefinite"
+              />
+              <ellipse cx="0" cy="115" rx="30" ry="10" />
+              <ellipse cx="18" cy="107" rx="18" ry="10" />
+            </g>
+            <g>
+              <animateTransform
+                attributeName="transform"
+                type="translate"
+                from="-70 0"
+                to="860 0"
+                dur="120s"
+                begin="-98s"
+                repeatCount="indefinite"
+              />
+              <ellipse cx="0" cy="140" rx="34" ry="11" />
+            </g>
           </g>
 
           {/* Distant mountains */}
@@ -514,8 +540,6 @@ function App() {
           className="absolute w-10 h-10"
           style={{
             transform: `translate(${player.x}px, ${player.y}px) rotate(${player.vx * 2}deg)`,
-            // Blinks while invulnerable after being hit by the bunny
-            opacity: player.blink ? 0.25 : 1,
           }}
         >
           {/* Chicken Body: mirrored to face the way it is moving */}
@@ -577,6 +601,56 @@ function App() {
               className="absolute max-w-none select-none"
               style={{ left: 0, top: -8, width: 40, height: 52, transform: `scaleX(${player.facing})` }}
             />
+          )}
+
+          {/* Tears: fall from the eyes for as long as the player is crying */}
+          {player.crying && (
+            <svg
+              className="absolute pointer-events-none"
+              style={{ left: 0, top: -8 }}
+              width="40"
+              height="60"
+              viewBox="0 0 40 60"
+              overflow="visible"
+              role="img"
+              aria-label="Crying"
+            >
+              {(isHen
+                ? [{ x: player.facing === 1 ? 33.5 : 6.5, y: 17 }]
+                : [
+                    { x: 11.5, y: 28 },
+                    { x: 27.5, y: 28 },
+                  ]
+              ).flatMap((eye, eyeIndex) =>
+                [0, 0.3].map(delay => (
+                  <circle
+                    key={`${eyeIndex}-${delay}`}
+                    cx={eye.x}
+                    cy={eye.y}
+                    r="2.4"
+                    fill="#38bdf8"
+                    stroke="#e0f2fe"
+                    strokeWidth="0.8"
+                  >
+                    <animate
+                      attributeName="cy"
+                      from={eye.y}
+                      to={eye.y + 24}
+                      dur="0.6s"
+                      begin={`${delay}s`}
+                      repeatCount="indefinite"
+                    />
+                    <animate
+                      attributeName="opacity"
+                      values="1;1;0"
+                      dur="0.6s"
+                      begin={`${delay}s`}
+                      repeatCount="indefinite"
+                    />
+                  </circle>
+                ))
+              )}
+            </svg>
           )}
         </div>
 
