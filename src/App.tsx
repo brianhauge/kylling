@@ -190,6 +190,7 @@ const WALK_CYCLE_SPEED = 0.22; // Leg swing (radians) per px walked
 const LEG_SWING_DEGREES = 28;
 
 const MAX_LIVES = 3;
+const REVIVE_PRICE = 10; // Kroner to carry on after Game Over
 const HIT_GRACE_FRAMES = 120; // Invulnerable (and crying) for 2 seconds after a hit
 
 // From this level on the platforms bob up and down.
@@ -855,6 +856,19 @@ function App() {
     setEggs(eggsRef.current);
     setBunny(bunnyRef.current);
     setScore(0);
+    setGameOver(false);
+  };
+
+  // Revive: pay to carry on where the game ended, with all hearts back and
+  // the score, level and place kept.
+  const revive = () => {
+    if (!gameOver || save.coins < REVIVE_PRICE) return;
+    setSave(s => ({ ...s, coins: s.coins - REVIVE_PRICE }));
+    livesRef.current = MAX_LIVES;
+    setLives(MAX_LIVES);
+    graceFrames.current = HIT_GRACE_FRAMES; // A moment to get away from whatever ended the game
+    keys.current = { left: false, right: false, down: false, jump: false, jumpPressed: false };
+    setShopOpen(false);
     setGameOver(false);
   };
 
@@ -1800,6 +1814,14 @@ function App() {
                     className="bg-green-500 text-white px-6 py-2 rounded-full hover:bg-green-600 transition-colors"
                   >
                     Play Again
+                  </button>
+                  <button
+                    onClick={revive}
+                    disabled={save.coins < REVIVE_PRICE}
+                    className="flex items-center gap-1.5 bg-rose-500 text-white px-6 py-2 rounded-full hover:bg-rose-600 transition-colors disabled:bg-gray-200 disabled:text-gray-400 disabled:cursor-not-allowed"
+                  >
+                    <Heart className="w-5 h-5 fill-current" />
+                    Revive · {REVIVE_PRICE} kr
                   </button>
                   <button
                     onClick={() => setShopOpen(true)}
