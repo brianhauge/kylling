@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { Egg, Heart } from 'lucide-react';
 import chickImage from './assets/chick.png';
+import { Coin, Shop, Wearables } from './Shop';
+import { ItemId, SHOP_ITEMS, SaveData, loadSave, storeSave } from './shopData';
 import bunnyImage from './assets/bunny.png';
 
 interface Position {
@@ -55,6 +57,11 @@ interface EggItem extends Position {
   gold?: boolean;
   red?: boolean;
 }
+
+const EGGS_PER_COIN = 6; // Every sixth egg collected makes a coin appear
+const COIN_VALUE = 1; // Kroner per coin
+const FOLLOW_DELAY_FRAMES = 22; // How far behind in time the follower chick walks
+const FOLLOW_GAP = 26; // ...and how many px behind the player it stops
 
 const RED_EGG_INTERVAL = 15; // Every 15th egg is red and gives a lost heart back
 
@@ -175,6 +182,35 @@ function App() {
   const cloudRef = useRef<StormCloud | null>(null);
   const cloudDelay = useRef(CLOUD_PAUSE_FRAMES);
   const [cloud, setCloud] = useState<StormCloud | null>(null);
+
+  // Money: every sixth egg collected makes a coin appear somewhere.
+  const eggsCollected = useRef(0);
+  const coinsOwed = useRef(0);
+  const coinRef = useRef<Position | null>(null);
+  const [coin, setCoin] = useState<Position | null>(null);
+
+  // The little chick that follows the player walks where the player was a moment ago.
+  const trail = useRef<{ x: number; y: number; facing: number }[]>([]);
+  const [follower, setFollower] = useState({ x: 50, y: GROUND_LEVEL, facing: 1 });
+
+  // Wallet and wardrobe, kept between games and visits.
+  const [save, setSave] = useState<SaveData>(loadSave);
+  const [shopOpen, setShopOpen] = useState(false);
+  useEffect(() => storeSave(save), [save]);
+
+  const buyItem = (id: ItemId) =>
+    setSave(s => {
+      const item = SHOP_ITEMS.find(i => i.id === id);
+      if (!item || s.owned.includes(id) || s.coins < item.price) return s;
+      // A newly bought item is put on straight away.
+      return { coins: s.coins - item.price, owned: [...s.owned, id], wearing: [...s.wearing, id] };
+    });
+  const toggleWear = (id: ItemId) =>
+    setSave(s => {
+      if (!s.owned.includes(id)) return s;
+      const wearing = s.wearing.includes(id) ? s.wearing.filter(w => w !== id) : [...s.wearing, id];
+      return { ...s, wearing };
+    });
 
   const [player, setPlayer] = useState({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false });
   const [lives, setLives] = useState(MAX_LIVES);
@@ -330,6 +366,11 @@ function App() {
       const remaining = eggsRef.current.filter(egg => !overlaps(hitbox, egg));
       if (remaining.length < eggsRef.current.length) {
         const taken = eggsRef.current.filter(egg => !remaining.includes(egg));
+        // Every sixth egg collected earns a coin to pick up.
+        for (let i = 0; i < taken.length; i++) {
+          eggsCollected.current += 1;
+          if (eggsCollected.current % EGGS_PER_COIN === 0) coinsOwed.current += 1;
+        }
         const points = taken.reduce((sum, egg) => sum + (egg.gold ? GOLD_EGG_POINTS : 1), 0);
         // A red egg heals one lost heart (it does nothing extra at full health).
         if (taken.some(egg => egg.red) && livesRef.current < MAX_LIVES) {
@@ -353,6 +394,27 @@ function App() {
         scoreRef.current += points;
         setScore(scoreRef.current);
       }
+
+      // Coin: pick it up for money, or drop a new one if one is owed.
+      if (coinRef.current && overlaps(hitbox, coinRef.current)) {
+        coinRef.current = null;
+        setCoin(null);
+        setSave(s => ({ ...s, coins: s.coins + COIN_VALUE }));
+      }
+      if (!coinRef.current && coinsOwed.current > 0) {
+        const free = EGG_SPOTS.filter(
+          spot =>
+            !eggsRef.current.some(egg => egg.x === spot.x && egg.y === spot.y) &&
+            !overlaps(hitbox, spot)
+        );
+        coinRef.current = free[Math.floor(Math.random() * free.length)];
+        coinsOwed.current -= 1;
+        setCoin(coinRef.current);
+      }
+
+      // Follower chick: stands where the player was FOLLOW_DELAY_FRAMES ago.
+      trail.current.push({ x: b.x, y: b.y, facing: dir !== 0 ? dir : trail.current[trail.current.length - 1]?.facing ?? 1 });
+      if (trail.current.length > FOLLOW_DELAY_FRAMES) setFollower(trail.current.shift()!);
 
       // Storm cloud: from level 2 one appears above the screen at a random
       // place and travels straight down, all the way through the picture.
@@ -419,6 +481,13 @@ function App() {
     cloudRef.current = null;
     cloudDelay.current = CLOUD_PAUSE_FRAMES;
     setCloud(null);
+    eggsCollected.current = 0;
+    coinsOwed.current = 0;
+    coinRef.current = null;
+    setCoin(null);
+    trail.current = [];
+    setFollower({ x: 50, y: GROUND_LEVEL, facing: 1 });
+    setShopOpen(false);
     setPlayer({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false });
     setLives(MAX_LIVES);
     setPlatformYs(platformYsRef.current);
@@ -428,18 +497,20 @@ function App() {
     setGameOver(false);
   };
 
-  // Enter restarts the game from the Game Over screen.
+  // Enter restarts the game from the Game Over screen; Escape leaves the shop.
   useEffect(() => {
     if (!gameOver) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !shopOpen) {
         e.preventDefault();
         restartGame();
+      } else if (e.key === 'Escape' && shopOpen) {
+        setShopOpen(false);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [gameOver]);
+  }, [gameOver, shopOpen]);
 
   return (
     <div className="h-screen bg-gradient-to-b from-sky-300 to-sky-100 flex items-center justify-center overflow-hidden">
@@ -628,6 +699,15 @@ function App() {
               />
             ))}
           </div>
+          {/* Money */}
+          <div
+            className="bg-white px-3 py-2 rounded-full shadow-md flex items-center gap-1"
+            role="img"
+            aria-label={`Money: ${save.coins} kr`}
+          >
+            <Coin size={24} />
+            <span className="font-bold text-amber-700">{save.coins} kr</span>
+          </div>
         </div>
 
         {/* Level-up banner */}
@@ -782,7 +862,35 @@ function App() {
               )}
             </svg>
           )}
+
+          {/* Things bought in the shop */}
+          <Wearables wearing={save.wearing} isHen={isHen} facing={player.facing} />
         </div>
+
+        {/* Follower chick from the shop: a small copy that trails behind */}
+        {save.wearing.includes('follower') && (
+          <img
+            src={chickImage}
+            alt="Follower chick"
+            draggable={false}
+            className="absolute max-w-none select-none"
+            style={{
+              left: 9,
+              top: 11,
+              width: 22,
+              height: 33,
+              // Kept a step behind, so it stands next to the player rather than on top
+              transform: `translate(${follower.x - follower.facing * FOLLOW_GAP}px, ${follower.y}px) scaleX(${-follower.facing})`,
+            }}
+          />
+        )}
+
+        {/* Coin */}
+        {coin && (
+          <div className="absolute" style={{ transform: `translate(${coin.x}px, ${coin.y}px)` }}>
+            <Coin />
+          </div>
+        )}
 
         {/* Eggs */}
         {eggs.map((egg, index) => (
@@ -870,21 +978,40 @@ function App() {
         {/* Game Over Screen */}
         {gameOver && (
           <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-            <div className="bg-white p-8 rounded-lg text-center">
-              <h2 className="text-2xl font-bold mb-4">Game Over!</h2>
-              <p className="text-lg mb-4">
-                Final Score: {score} · Level {level}
-              </p>
-              <button
-                onClick={restartGame}
-                className="bg-green-500 text-white px-6 py-2 rounded-full hover:bg-green-600 transition-colors"
-              >
-                Play Again
-              </button>
-              <p className="text-sm text-gray-500 mt-3">
-                or press <span className="font-bold">Enter</span>
-              </p>
-            </div>
+            {shopOpen ? (
+              <div className="text-center">
+                <Shop
+                  save={save}
+                  onBuy={buyItem}
+                  onToggleWear={toggleWear}
+                  onBack={() => setShopOpen(false)}
+                />
+              </div>
+            ) : (
+              <div className="bg-white p-8 rounded-lg text-center">
+                <h2 className="text-2xl font-bold mb-4">Game Over!</h2>
+                <p className="text-lg mb-4">
+                  Final Score: {score} · Level {level}
+                </p>
+                <div className="flex flex-col items-center gap-2">
+                  <button
+                    onClick={restartGame}
+                    className="bg-green-500 text-white px-6 py-2 rounded-full hover:bg-green-600 transition-colors"
+                  >
+                    Play Again
+                  </button>
+                  <button
+                    onClick={() => setShopOpen(true)}
+                    className="bg-amber-400 text-white px-6 py-2 rounded-full hover:bg-amber-500 transition-colors"
+                  >
+                    Shop
+                  </button>
+                </div>
+                <p className="text-sm text-gray-500 mt-3">
+                  or press <span className="font-bold">Enter</span> to play again
+                </p>
+              </div>
+            )}
           </div>
         )}
 
