@@ -143,6 +143,7 @@ const ROOM_ROW: Room[] = [MEADOW, TRAMPOLINE_PLACE, BEACH]; // Left to right
 
 const BEACH_WATER_X = WORLD_WIDTH / 2; // Sand to the left of this, water to the right
 const WADING_SPEED = 2.5; // Top speed in the water (half the normal speed)
+const RAINBOW_MS = 20_000; // Rainbow-coloured, and safe from the bunny, for 20 seconds
 const SUNBURN_OPACITY = 0.75; // How strong the red tint is when fully red
 const SUNBURN_FRAMES = 300; // The head takes 5 seconds to turn fully red at the beach
 const FISHER_X = 290; // The fisher stands on the sand at the water's edge
@@ -277,8 +278,9 @@ function App() {
   // The beach: the head slowly turns red in the sun, until the water bottle
   // by the fisher is picked up, which turns the figure rainbow-coloured.
   const heatRef = useRef(0); // 0 = normal, 1 = fully red
-  const rainbowRef = useRef(false);
-  const [rainbow, setRainbow] = useState(false);
+  const rainbowEndsAt = useRef(0); // Clock time (ms) at which the rainbow wears off
+  const [rainbowSeconds, setRainbowSeconds] = useState(0);
+  const rainbow = rainbowSeconds > 0;
   const [lives, setLives] = useState(MAX_LIVES);
   const [platformYs, setPlatformYs] = useState<number[]>(platformYsRef.current);
   const [eggs, setEggs] = useState<EggItem[]>(eggsRef.current);
@@ -504,19 +506,23 @@ function App() {
       else stepRef.current = 0;
 
       // Beach: the head goes red over five seconds in the sun and cools off
-      // again elsewhere. Picking up the water bottle ends that for this game
-      // and makes the figure rainbow-coloured instead.
+      // again elsewhere. Picking up the water bottle makes the figure
+      // rainbow-coloured for 20 seconds instead; after that the bottle is back.
       const atBeach = roomRef.current === BEACH;
+      // (Timed by the clock rather than in frames, so that it lasts exactly 20 seconds.)
+      const now = performance.now();
       if (
+        now >= rainbowEndsAt.current &&
         atBeach &&
-        !rainbowRef.current &&
         overlaps({ x: b.x, y: b.y, width: PLAYER_SIZE, height: PLAYER_SIZE }, WATER_BOTTLE)
       ) {
-        rainbowRef.current = true;
-        setRainbow(true);
+        rainbowEndsAt.current = now + RAINBOW_MS;
       }
-      const heating = atBeach && !rainbowRef.current;
-      heatRef.current = rainbowRef.current
+      const isRainbow = now < rainbowEndsAt.current;
+      // Whole seconds left, shown in the top bar (0 = not rainbow-coloured).
+      setRainbowSeconds(isRainbow ? Math.ceil((rainbowEndsAt.current - now) / 1000) : 0);
+      const heating = atBeach && !isRainbow;
+      heatRef.current = isRainbow
         ? 0
         : Math.max(0, Math.min(1, heatRef.current + (heating ? 1 : -1) / SUNBURN_FRAMES));
 
@@ -681,6 +687,8 @@ function App() {
         setHasKnife(false);
         touchingBunny = false;
       }
+      // While rainbow-coloured the bunny cannot hurt the player.
+      if (isRainbow) touchingBunny = false;
       const touchingEnemy =
         touchingBunny || (cloudRef.current !== null && overlaps(hitbox, cloudRef.current));
       if (graceFrames.current === 0 && touchingEnemy) {
@@ -731,8 +739,8 @@ function App() {
     hasKnifeRef.current = false;
     setHasKnife(false);
     heatRef.current = 0;
-    rainbowRef.current = false;
-    setRainbow(false);
+    rainbowEndsAt.current = 0;
+    setRainbowSeconds(0);
     bunnyAliveRef.current = true;
     setBunnyAlive(true);
     setPlayer({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0, flip: 0, heat: 0 });
@@ -1059,6 +1067,17 @@ function App() {
               </span>
             )}
           </div>
+          {/* Rainbow time left: safe from the bunny for as long as it lasts */}
+          {rainbow && (
+            <div
+              className="px-3 py-2 rounded-full shadow-md font-bold text-white"
+              style={{ background: 'linear-gradient(90deg, #ef4444, #f59e0b, #22c55e, #3b82f6, #a855f7)' }}
+              role="img"
+              aria-label={`Rainbow: ${rainbowSeconds} seconds left`}
+            >
+              {rainbowSeconds}s
+            </div>
+          )}
           {/* Knife in hand */}
           {hasKnife && (
             <div className="bg-white px-2 py-1.5 rounded-full shadow-md" role="img" aria-label="Holding the knife">
