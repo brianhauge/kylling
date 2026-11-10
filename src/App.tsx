@@ -718,7 +718,8 @@ function App() {
               alt="Chick"
               draggable={false}
               className="absolute max-w-none select-none"
-              style={{ left: 2, top: -10, width: 36, height: 54, transform: `scaleX(${player.facing})` }}
+              // The picture itself looks to the left, so it is mirrored when walking right.
+              style={{ left: 2, top: -10, width: 36, height: 54, transform: `scaleX(${-player.facing})` }}
             />
           )}
 
@@ -736,12 +737,12 @@ function App() {
             >
               {(isHen
                 ? [{ x: player.facing === 1 ? 33.5 : 6.5, y: 17 }]
-                : // The chick picture looks to the right, so its eyes sit at
+                : // The chick picture looks to the left, so its eyes sit at
                   // different heights and swap sides when it turns around.
                   [
                     { x: 9.5, y: 24 },
                     { x: 25.5, y: 20 },
-                  ].map(eye => ({ x: player.facing === 1 ? eye.x : 40 - eye.x, y: eye.y }))
+                  ].map(eye => ({ x: player.facing === -1 ? eye.x : 40 - eye.x, y: eye.y }))
               ).flatMap((eye, eyeIndex) =>
                 [0, 0.3].map(delay => (
                   <circle
