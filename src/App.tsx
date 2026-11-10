@@ -33,7 +33,9 @@ const fitScale = () =>
 
 // Vertical movement
 const GRAVITY = 0.6;
-const JUMP_FORCE = -14; // Peak height ≈ JUMP_FORCE² / (2 × GRAVITY) ≈ 163px
+// Peak height ≈ JUMP_FORCE² / (2 × GRAVITY) ≈ 120px. A double jump from the
+// top of the first reaches about twice that.
+const JUMP_FORCE = -12;
 const JUMP_CUT_SPEED = -5; // Releasing Space early caps the upward speed → shorter hop
 
 // Horizontal movement (px per frame)
@@ -123,6 +125,10 @@ const initialBody = () => ({
   onGround: true,
   platform: null as number | null, // Index of the platform being stood on
   floating: false, // Rising from the trampoline up to the sky
+  facing: 1, // 1 = right, -1 = left
+  doubleJumped: false, // The mid-air jump has been used since last standing
+  flip: 0, // Degrees of the somersault turned so far (0 = not turning)
+  flipDir: 1,
 });
 
 // The three places. The meadow is the main one; walking out of its right side
@@ -131,7 +137,13 @@ const initialBody = () => ({
 const MEADOW = 0;
 const TRAMPOLINE_PLACE = 1;
 const SKY = 2;
-type Room = typeof MEADOW | typeof TRAMPOLINE_PLACE | typeof SKY;
+const BEACH = 3; // Further on past the trampoline place
+type Room = typeof MEADOW | typeof TRAMPOLINE_PLACE | typeof SKY | typeof BEACH;
+const ROOM_ROW: Room[] = [MEADOW, TRAMPOLINE_PLACE, BEACH]; // Left to right
+
+const BEACH_WATER_X = WORLD_WIDTH / 2; // Sand to the left of this, water to the right
+const WADING_SPEED = 2.5; // Top speed in the water (half the normal speed)
+const FLIP_DEGREES_PER_FRAME = 15; // The somersault takes 24 frames
 
 // `y` is where the feet of the 40px player box come to rest.
 const TRAMPOLINE = { x: 360, y: 314, width: 80 };
@@ -193,7 +205,7 @@ function App() {
   // The simulation lives in refs so the game loop always sees current values;
   // the state below is only what gets drawn.
   const body = useRef(initialBody());
-  const keys = useRef({ left: false, right: false, jump: false });
+  const keys = useRef({ left: false, right: false, jump: false, jumpPressed: false });
   const eggsRef = useRef<EggItem[]>(initialEggs());
   const lastBatch = useRef<Position[]>(eggsRef.current);
   const eggsLaid = useRef(eggsRef.current.length);
@@ -239,7 +251,7 @@ function App() {
       return { ...s, wearing };
     });
 
-  const [player, setPlayer] = useState({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0 });
+  const [player, setPlayer] = useState({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0, flip: 0 });
 
   // Which place the player is in, the walking cycle, and the level in which
   // the blue egg was last taken (its bonus lasts for the rest of that level).
@@ -269,6 +281,8 @@ function App() {
   const isHen = level >= HEN_LEVEL;
   const isNight = level >= NIGHT_LEVEL;
   const doubleCoins = bonusLevel === level;
+  // The meadow and the trampoline place share the hills and the grass.
+  const hasMeadowLand = room === MEADOW || room === TRAMPOLINE_PLACE;
   const legAngle = Math.sin(player.step) * LEG_SWING_DEGREES;
 
   // Scale the game to fill most of the window, keeping its 2:1 shape.
@@ -295,6 +309,8 @@ function App() {
     const setKey = (e: KeyboardEvent, down: boolean) => {
       if (e.code === 'Space' || e.key === 'ArrowUp') {
         keys.current.jump = down;
+        // A fresh press (not a key held down) is what triggers the double jump.
+        if (down && !e.repeat) keys.current.jumpPressed = true;
         // Letting go of Space on the way up cuts the jump short.
         if (!down && body.current.vy < JUMP_CUT_SPEED) body.current.vy = JUMP_CUT_SPEED;
       } else if (e.key === 'ArrowLeft') {
@@ -309,7 +325,7 @@ function App() {
     const onKeyDown = (e: KeyboardEvent) => setKey(e, true);
     const onKeyUp = (e: KeyboardEvent) => setKey(e, false);
     const releaseAll = () => {
-      keys.current = { left: false, right: false, jump: false };
+      keys.current = { left: false, right: false, jump: false, jumpPressed: false };
     };
 
     window.addEventListener('keydown', onKeyDown);
@@ -358,15 +374,21 @@ function App() {
         b.vx *= b.onGround ? GROUND_FRICTION : AIR_FRICTION;
         if (Math.abs(b.vx) < 0.05) b.vx = 0;
       }
+      if (dir !== 0) b.facing = dir;
+      // Wading through the water at the beach is slow going.
+      if (room === BEACH && b.x + PLAYER_SIZE / 2 > BEACH_WATER_X) {
+        b.vx = Math.max(-WADING_SPEED, Math.min(WADING_SPEED, b.vx));
+      }
       b.x += b.vx;
       const maxX = WORLD_WIDTH - PLAYER_SIZE;
-      if (room === MEADOW && b.x > maxX && b.vx > 0) {
-        // Walking all the way out of the meadow's right side leads to the trampoline place...
-        nextRoom = TRAMPOLINE_PLACE;
+      // The places lie in a row: meadow – trampoline place – beach. Walking
+      // all the way out of one side leads to the neighbour on that side.
+      const rowIndex = ROOM_ROW.indexOf(room);
+      if (rowIndex >= 0 && b.x > maxX && b.vx > 0 && rowIndex < ROOM_ROW.length - 1) {
+        nextRoom = ROOM_ROW[rowIndex + 1];
         b.x = 0;
-      } else if (room === TRAMPOLINE_PLACE && b.x < 0 && b.vx < 0) {
-        // ...and walking back out of its left side leads home again.
-        nextRoom = MEADOW;
+      } else if (rowIndex > 0 && b.x < 0 && b.vx < 0) {
+        nextRoom = ROOM_ROW[rowIndex - 1];
         b.x = maxX;
       } else if (b.x < 0 || b.x > maxX) {
         b.x = Math.max(0, Math.min(maxX, b.x));
@@ -391,7 +413,16 @@ function App() {
           b.vy = 0;
         }
       } else {
-        if (k.jump && wasOnGround) b.vy = JUMP_FORCE;
+        if (wasOnGround) b.doubleJumped = false;
+        if (k.jump && wasOnGround) {
+          b.vy = JUMP_FORCE;
+        } else if (!wasOnGround && k.jumpPressed && !b.doubleJumped) {
+          // Double jump: one more jump in mid-air on a fresh press, with a somersault.
+          b.vy = JUMP_FORCE;
+          b.doubleJumped = true;
+          b.flip = FLIP_DEGREES_PER_FRAME;
+          b.flipDir = b.facing;
+        }
         b.vy += GRAVITY;
         nextY = b.y + b.vy;
         if (b.vy > 0) {
@@ -419,7 +450,12 @@ function App() {
               b.floating = true;
               b.vy = FLOAT_SPEED;
             }
-          } else if (isOver(SKY_CLOUD) && feetBefore <= SKY_CLOUD.y + 0.01 && feetAfter >= SKY_CLOUD.y) {
+          } else if (
+            room === SKY &&
+            isOver(SKY_CLOUD) &&
+            feetBefore <= SKY_CLOUD.y + 0.01 &&
+            feetAfter >= SKY_CLOUD.y
+          ) {
             nextY = SKY_CLOUD.y - PLAYER_SIZE;
             b.vy = 0;
             b.onGround = true;
@@ -439,6 +475,13 @@ function App() {
         }
       }
       b.y = nextY;
+      k.jumpPressed = false;
+
+      // Somersault: one full turn, cut short by landing or by the trampoline.
+      if (b.flip > 0) {
+        b.flip += FLIP_DEGREES_PER_FRAME;
+        if (b.flip >= 360 || b.onGround || b.floating) b.flip = 0;
+      }
 
       if (nextRoom !== room) {
         roomRef.current = nextRoom;
@@ -459,6 +502,7 @@ function App() {
         facing: dir !== 0 ? dir : p.facing,
         crying,
         step: stepRef.current,
+        flip: b.flip * b.flipDir,
       }));
 
       const hitbox: GameObject = { x: b.x, y: b.y, width: PLAYER_SIZE, height: PLAYER_SIZE };
@@ -633,7 +677,7 @@ function App() {
     bunnyRef.current = initialBunny();
     bunnyDir.current = -1;
     setBunnyFacing(-1);
-    keys.current = { left: false, right: false, jump: false };
+    keys.current = { left: false, right: false, jump: false, jumpPressed: false };
     scoreRef.current = 0;
     livesRef.current = MAX_LIVES;
     graceFrames.current = 0;
@@ -660,7 +704,7 @@ function App() {
     setHasKnife(false);
     bunnyAliveRef.current = true;
     setBunnyAlive(true);
-    setPlayer({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0 });
+    setPlayer({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0, flip: 0 });
     setLives(MAX_LIVES);
     setPlatformYs(platformYsRef.current);
     setEggs(eggsRef.current);
@@ -814,7 +858,7 @@ function App() {
           </g>
 
           {/* The landscape is not visible from up in the sky */}
-          {room !== SKY && (
+          {hasMeadowLand && (
           <g>
           {/* Distant mountains */}
           <path
@@ -855,6 +899,93 @@ function App() {
           </g>
           )}
         </svg>
+
+        {/* The beach: a sunset over the sea, with sand on the left half and water on the right */}
+        {room === BEACH && (
+          <svg
+            className="absolute inset-0 w-full h-full pointer-events-none"
+            viewBox="0 0 800 400"
+            preserveAspectRatio="none"
+            role="img"
+            aria-label="Beach at sunset"
+          >
+            <defs>
+              <linearGradient id="sunsetSky" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#312e81" />
+                <stop offset="35%" stopColor="#9d174d" />
+                <stop offset="65%" stopColor="#f97316" />
+                <stop offset="82%" stopColor="#fde68a" />
+              </linearGradient>
+              <radialGradient id="sunsetGlow">
+                <stop offset="0%" stopColor="#fef08a" stopOpacity="0.9" />
+                <stop offset="100%" stopColor="#fb923c" stopOpacity="0" />
+              </radialGradient>
+              <linearGradient id="beachSand" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#fcd34d" />
+                <stop offset="100%" stopColor="#d97706" />
+              </linearGradient>
+              <linearGradient id="beachSea" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#0ea5e9" />
+                <stop offset="100%" stopColor="#1e3a8a" />
+              </linearGradient>
+            </defs>
+
+            {/* Sky */}
+            <rect width="800" height="400" fill="url(#sunsetSky)" />
+            {/* Sun going down into the sea */}
+            <circle cx="610" cy="318" r="130" fill="url(#sunsetGlow)" />
+            <circle cx="610" cy="318" r="48" fill="#fde047" />
+            {/* Evening clouds */}
+            <g fill="#831843" opacity="0.55">
+              <ellipse cx="170" cy="120" rx="90" ry="10" />
+              <ellipse cx="230" cy="134" rx="60" ry="7" />
+              <ellipse cx="520" cy="90" rx="110" ry="9" />
+              <ellipse cx="700" cy="170" rx="70" ry="7" />
+            </g>
+            {/* Seagulls */}
+            <g stroke="#1e1b4b" strokeWidth="2" fill="none" strokeLinecap="round">
+              <path d="M300 180 q8 -8 16 0 q8 -8 16 0" />
+              <path d="M360 150 q6 -6 12 0 q6 -6 12 0" />
+            </g>
+
+            {/* Sea: the right half of the ground, out to the horizon */}
+            <rect x={BEACH_WATER_X} y="320" width={800 - BEACH_WATER_X} height="80" fill="url(#beachSea)" />
+            {/* The sun's reflection */}
+            <g fill="#fde047" opacity="0.55">
+              <rect x="572" y="326" width="76" height="4" rx="2" />
+              <rect x="584" y="338" width="52" height="4" rx="2" />
+              <rect x="592" y="351" width="36" height="4" rx="2" />
+              <rect x="600" y="365" width="20" height="4" rx="2" />
+            </g>
+
+            {/* Sand: the left half of the ground, sloping into the water */}
+            <path
+              d={`M0 320 H${BEACH_WATER_X} Q${BEACH_WATER_X + 16} 352 ${BEACH_WATER_X + 34} 400 H0 Z`}
+              fill="url(#beachSand)"
+            />
+            {/* Shells and a starfish */}
+            <g fill="#fff7ed" stroke="#c2410c" strokeWidth="1">
+              <path d="M250 372 q7 -12 14 0 Z" />
+              <path d="M130 384 q5 -9 10 0 Z" />
+            </g>
+            <path
+              d="M330 368 l3 7 l7 1 l-5 5 l1 7 l-6 -4 l-6 4 l1 -7 l-5 -5 l7 -1 Z"
+              fill="#fb7185"
+              stroke="#be123c"
+              strokeWidth="1"
+            />
+
+            {/* Palm tree */}
+            <path d="M92 322 Q84 250 104 196 L112 198 Q98 252 104 322 Z" fill="#78350f" />
+            <g fill="#14532d">
+              <path d="M108 198 Q70 170 34 190 Q66 180 104 204 Z" />
+              <path d="M108 198 Q84 150 48 146 Q80 160 102 202 Z" />
+              <path d="M108 198 Q118 148 156 136 Q128 158 114 202 Z" />
+              <path d="M108 198 Q150 172 186 190 Q152 182 112 204 Z" />
+              <path d="M108 198 Q140 196 166 222 Q138 208 110 206 Z" />
+            </g>
+          </svg>
+        )}
 
         {/* Score */}
         <div className="absolute top-4 left-4 flex items-center gap-2">
@@ -915,7 +1046,7 @@ function App() {
         )}
 
         {/* Ground (there is none in the sky) */}
-        {room !== SKY && (
+        {hasMeadowLand && (
           <div className="absolute bottom-0 w-full h-20 bg-gradient-to-b from-green-500 to-green-600">
             {/* Night tint */}
             <div
@@ -928,6 +1059,8 @@ function App() {
         {/* Signposts between the meadow and the trampoline place */}
         {room === MEADOW && <Signpost x={762} label="→" />}
         {room === TRAMPOLINE_PLACE && <Signpost x={8} label="←" />}
+        {room === TRAMPOLINE_PLACE && <Signpost x={762} label="→" />}
+        {room === BEACH && <Signpost x={8} label="←" />}
 
         {/* Trampoline */}
         {room === TRAMPOLINE_PLACE && (
@@ -1018,7 +1151,7 @@ function App() {
         <div
           className="absolute w-10 h-10"
           style={{
-            transform: `translate(${player.x}px, ${player.y}px) rotate(${player.vx * 2}deg)`,
+            transform: `translate(${player.x}px, ${player.y}px) rotate(${player.vx * 2 + player.flip}deg)`,
           }}
         >
           {/* Chicken Body: mirrored to face the way it is moving */}
@@ -1216,6 +1349,31 @@ function App() {
               transform: `translate(${follower.x - follower.facing * FOLLOW_GAP}px, ${follower.y}px) scaleX(${-follower.facing})`,
             }}
           />
+        )}
+
+        {/* The surface of the sea, drawn in front of the player so that it wades in it */}
+        {room === BEACH && (
+          <svg
+            className="absolute pointer-events-none"
+            style={{ left: BEACH_WATER_X, top: 330 }}
+            width={WORLD_WIDTH - BEACH_WATER_X}
+            height="70"
+            viewBox={`0 0 ${WORLD_WIDTH - BEACH_WATER_X} 70`}
+            aria-hidden="true"
+          >
+            <path
+              d="M12 6 Q30 0 50 6 T90 6 T130 6 T170 6 T210 6 T250 6 T290 6 T330 6 T370 6 T400 6 V70 H40 Q28 40 12 6 Z"
+              fill="#0e7490"
+              opacity="0.6"
+            />
+            <path
+              d="M12 6 Q30 0 50 6 T90 6 T130 6 T170 6 T210 6 T250 6 T290 6 T330 6 T370 6 T400 6"
+              fill="none"
+              stroke="#e0f2fe"
+              strokeWidth="2"
+              opacity="0.8"
+            />
+          </svg>
         )}
 
         {/* Coin */}
