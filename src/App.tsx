@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Egg, Heart } from 'lucide-react';
 import chickImage from './assets/chick.png';
 import { Coin, Shop, Wearables } from './Shop';
+import { KnifeIcon, Signpost } from './Props';
 import { ItemId, SHOP_ITEMS, SaveData, loadSave, storeSave } from './shopData';
 import bunnyImage from './assets/bunny.png';
 
@@ -121,7 +122,33 @@ const initialBody = () => ({
   vy: 0,
   onGround: true,
   platform: null as number | null, // Index of the platform being stood on
+  floating: false, // Rising from the trampoline up to the sky
 });
+
+// The three places. The meadow is the main one; walking out of its right side
+// leads to the trampoline place, and the trampoline carries the player up to
+// the sky, from where stepping off the cloud drops back down.
+const MEADOW = 0;
+const TRAMPOLINE_PLACE = 1;
+const SKY = 2;
+type Room = typeof MEADOW | typeof TRAMPOLINE_PLACE | typeof SKY;
+
+// `y` is where the feet of the 40px player box come to rest.
+const TRAMPOLINE = { x: 360, y: 314, width: 80 };
+const SKY_CLOUD = { x: 230, y: 250, width: 340 };
+const FLOAT_SPEED = -4; // px per frame while floating upwards
+const SKY_FLOAT_TOP = 150; // The float ends this high in the sky, above the cloud
+const BLUE_EGG: Position = { x: 480, y: 215 }; // On the sky cloud
+const BLUE_EGG_MULTIPLIER = 2; // Coins are worth this much more for the rest of the level
+// For testing later levels: while developing, opening the game with e.g.
+// "?score=85" in the address starts the first game at that score.
+const DEV_START_SCORE = import.meta.env.DEV
+  ? Math.max(0, Number(new URLSearchParams(window.location.search).get('score')) || 0)
+  : 0;
+
+const KNIFE_LEVEL = 5; // From this level a knife lies in the meadow
+const WALK_CYCLE_SPEED = 0.22; // Leg swing (radians) per px walked
+const LEG_SWING_DEGREES = 28;
 
 const MAX_LIVES = 3;
 const HIT_GRACE_FRAMES = 120; // Invulnerable (and crying) for 2 seconds after a hit
@@ -174,7 +201,7 @@ function App() {
   const bunnyDir = useRef(-1); // -1 = walking left, 1 = walking right
   const [bunnyFacing, setBunnyFacing] = useState(-1);
 
-  const scoreRef = useRef(0);
+  const scoreRef = useRef(DEV_START_SCORE);
   const livesRef = useRef(MAX_LIVES);
   const graceFrames = useRef(0);
   const platformYsRef = useRef<number[]>(restingPlatformYs());
@@ -212,18 +239,37 @@ function App() {
       return { ...s, wearing };
     });
 
-  const [player, setPlayer] = useState({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false });
+  const [player, setPlayer] = useState({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0 });
+
+  // Which place the player is in, the walking cycle, and the level in which
+  // the blue egg was last taken (its bonus lasts for the rest of that level).
+  const roomRef = useRef<Room>(MEADOW);
+  const [room, setRoom] = useState<Room>(MEADOW);
+  const stepRef = useRef(0);
+  const bonusLevelRef = useRef(0);
+  const [bonusLevel, setBonusLevel] = useState(0);
+
+  // The knife: appears from level 5, is used up on the bunny, and the bunny
+  // then stays away until the next game.
+  const knifeRef = useRef<Position | null>(null);
+  const [knife, setKnife] = useState<Position | null>(null);
+  const hasKnifeRef = useRef(false);
+  const [hasKnife, setHasKnife] = useState(false);
+  const bunnyAliveRef = useRef(true);
+  const [bunnyAlive, setBunnyAlive] = useState(true);
   const [lives, setLives] = useState(MAX_LIVES);
   const [platformYs, setPlatformYs] = useState<number[]>(platformYsRef.current);
   const [eggs, setEggs] = useState<EggItem[]>(eggsRef.current);
   const [bunny, setBunny] = useState<GameObject>(bunnyRef.current);
-  const [score, setScore] = useState<number>(0);
+  const [score, setScore] = useState<number>(DEV_START_SCORE);
   const [levelUp, setLevelUp] = useState<number | null>(null);
 
   // The level follows directly from the score: one level per 20 points.
   const level = levelForScore(score);
   const isHen = level >= HEN_LEVEL;
   const isNight = level >= NIGHT_LEVEL;
+  const doubleCoins = bonusLevel === level;
+  const legAngle = Math.sin(player.step) * LEG_SWING_DEGREES;
 
   // Scale the game to fill most of the window, keeping its 2:1 shape.
   const [scale, setScale] = useState(fitScale);
@@ -299,8 +345,13 @@ function App() {
       if (b.platform !== null) b.y = newYs[b.platform] - PLAYER_SIZE;
 
       // Horizontal: accelerate towards the held direction, otherwise slow down.
-      const dir = (k.right ? 1 : 0) - (k.left ? 1 : 0);
-      if (dir !== 0) {
+      // (No steering while floating up from the trampoline.)
+      const room = roomRef.current;
+      let nextRoom = room;
+      const dir = b.floating ? 0 : (k.right ? 1 : 0) - (k.left ? 1 : 0);
+      if (b.floating) {
+        b.vx = 0;
+      } else if (dir !== 0) {
         const accel = b.onGround ? GROUND_ACCEL : AIR_ACCEL;
         b.vx = Math.max(-MAX_SPEED, Math.min(MAX_SPEED, b.vx + dir * accel));
       } else {
@@ -309,58 +360,140 @@ function App() {
       }
       b.x += b.vx;
       const maxX = WORLD_WIDTH - PLAYER_SIZE;
-      if (b.x < 0 || b.x > maxX) {
+      if (room === MEADOW && b.x > maxX && b.vx > 0) {
+        // Walking all the way out of the meadow's right side leads to the trampoline place...
+        nextRoom = TRAMPOLINE_PLACE;
+        b.x = 0;
+      } else if (room === TRAMPOLINE_PLACE && b.x < 0 && b.vx < 0) {
+        // ...and walking back out of its left side leads home again.
+        nextRoom = MEADOW;
+        b.x = maxX;
+      } else if (b.x < 0 || b.x > maxX) {
         b.x = Math.max(0, Math.min(maxX, b.x));
         b.vx = 0;
       }
 
-      // Vertical: jump, gravity, then land on a platform or the ground.
-      if (k.jump && b.onGround) b.vy = JUMP_FORCE;
-      b.vy += GRAVITY;
-      let nextY = b.y + b.vy;
+      // Vertical: float, or jump and gravity, then land on something.
+      const wasOnGround = b.onGround;
+      let nextY: number;
       b.onGround = false;
       b.platform = null;
-      if (b.vy > 0) {
-        for (let i = 0; i < PLATFORMS.length; i++) {
-          const platform = PLATFORMS[i];
-          const overPlatform = b.x < platform.x + platform.width && b.x + PLAYER_SIZE > platform.x;
+      if (b.floating) {
+        // Floating up from the trampoline: a steady rise without gravity, out
+        // of the top of the trampoline place and up past the cloud in the sky.
+        b.vy = FLOAT_SPEED;
+        nextY = b.y + b.vy;
+        if (room === TRAMPOLINE_PLACE && nextY < -PLAYER_SIZE) {
+          nextRoom = SKY;
+          nextY = WORLD_HEIGHT;
+        } else if (room === SKY && nextY <= SKY_FLOAT_TOP) {
+          b.floating = false;
+          b.vy = 0;
+        }
+      } else {
+        if (k.jump && wasOnGround) b.vy = JUMP_FORCE;
+        b.vy += GRAVITY;
+        nextY = b.y + b.vy;
+        if (b.vy > 0) {
           const feetBefore = b.y + PLAYER_SIZE;
           const feetAfter = nextY + PLAYER_SIZE;
-          // The feet were above the platform (where it was or is now) and
-          // would end up at or below its current top.
-          const wasAbove = feetBefore <= Math.max(prevYs[i], newYs[i]) + 0.01;
-          if (overPlatform && wasAbove && feetAfter >= newYs[i]) {
-            nextY = newYs[i] - PLAYER_SIZE;
+          const isOver = (s: { x: number; width: number }) =>
+            b.x < s.x + s.width && b.x + PLAYER_SIZE > s.x;
+          if (room === MEADOW) {
+            for (let i = 0; i < PLATFORMS.length; i++) {
+              // The feet were above the platform (where it was or is now) and
+              // would end up at or below its current top.
+              const wasAbove = feetBefore <= Math.max(prevYs[i], newYs[i]) + 0.01;
+              if (isOver(PLATFORMS[i]) && wasAbove && feetAfter >= newYs[i]) {
+                nextY = newYs[i] - PLAYER_SIZE;
+                b.vy = 0;
+                b.onGround = true;
+                b.platform = i;
+                break;
+              }
+            }
+          } else if (room === TRAMPOLINE_PLACE) {
+            // Coming down onto the trampoline sends the player floating upwards.
+            if (isOver(TRAMPOLINE) && feetBefore <= TRAMPOLINE.y + 0.01 && feetAfter >= TRAMPOLINE.y) {
+              nextY = TRAMPOLINE.y - PLAYER_SIZE;
+              b.floating = true;
+              b.vy = FLOAT_SPEED;
+            }
+          } else if (isOver(SKY_CLOUD) && feetBefore <= SKY_CLOUD.y + 0.01 && feetAfter >= SKY_CLOUD.y) {
+            nextY = SKY_CLOUD.y - PLAYER_SIZE;
             b.vy = 0;
             b.onGround = true;
-            b.platform = i;
-            break;
           }
         }
-      }
-      if (nextY >= GROUND_LEVEL) {
-        nextY = GROUND_LEVEL;
-        b.vy = 0;
-        b.onGround = true;
-        b.platform = null;
+        if (room === SKY) {
+          // There is no ground in the sky: stepping off the cloud means
+          // falling out of the bottom and back down to the trampoline place.
+          if (nextY > WORLD_HEIGHT) {
+            nextRoom = TRAMPOLINE_PLACE;
+            nextY = -PLAYER_SIZE;
+          }
+        } else if (!b.floating && nextY >= GROUND_LEVEL) {
+          nextY = GROUND_LEVEL;
+          b.vy = 0;
+          b.onGround = true;
+        }
       }
       b.y = nextY;
 
+      if (nextRoom !== room) {
+        roomRef.current = nextRoom;
+        setRoom(nextRoom);
+        trail.current = []; // The follower chick comes along instead of walking the old route
+      }
+
+      // Walking: the legs swing with the distance covered, and rest otherwise.
+      if (b.onGround && Math.abs(b.vx) > 0.3) stepRef.current += Math.abs(b.vx) * WALK_CYCLE_SPEED;
+      else stepRef.current = 0;
+
       if (graceFrames.current > 0) graceFrames.current -= 1;
       const crying = graceFrames.current > 0;
-      setPlayer(p => ({ x: b.x, y: b.y, vx: b.vx, facing: dir !== 0 ? dir : p.facing, crying }));
-
-      // Move bunny
-      const bn = bunnyRef.current;
-      // Patrol back and forth, turning around at each end of the range.
-      const bunnyX = Math.max(BUNNY_MIN_X, Math.min(BUNNY_MAX_X, bn.x + bunnyDir.current * BUNNY_SPEED));
-      if (bunnyX <= BUNNY_MIN_X) bunnyDir.current = 1;
-      if (bunnyX >= BUNNY_MAX_X) bunnyDir.current = -1;
-      bunnyRef.current = { ...bn, x: bunnyX };
-      setBunnyFacing(bunnyDir.current);
-      setBunny(bunnyRef.current);
+      setPlayer(p => ({
+        x: b.x,
+        y: b.y,
+        vx: b.vx,
+        facing: dir !== 0 ? dir : p.facing,
+        crying,
+        step: stepRef.current,
+      }));
 
       const hitbox: GameObject = { x: b.x, y: b.y, width: PLAYER_SIZE, height: PLAYER_SIZE };
+
+      // Follower chick: stands where the player was FOLLOW_DELAY_FRAMES ago.
+      trail.current.push({ x: b.x, y: b.y, facing: dir !== 0 ? dir : trail.current[trail.current.length - 1]?.facing ?? 1 });
+      if (trail.current.length > FOLLOW_DELAY_FRAMES) setFollower(trail.current.shift()!);
+      else if (trail.current.length === 1) setFollower(trail.current[0]);
+
+      // The blue egg on the sky cloud doubles the value of coins until the next level.
+      const levelNow = levelForScore(scoreRef.current);
+      if (
+        roomRef.current === SKY &&
+        bonusLevelRef.current !== levelNow &&
+        overlaps(hitbox, BLUE_EGG)
+      ) {
+        bonusLevelRef.current = levelNow;
+        setBonusLevel(levelNow);
+      }
+
+      // Everything below belongs to the meadow, which stands still while the
+      // player is somewhere else.
+      if (roomRef.current !== MEADOW) return;
+
+      // Move bunny
+      if (bunnyAliveRef.current) {
+        const bn = bunnyRef.current;
+        // Patrol back and forth, turning around at each end of the range.
+        const bunnyX = Math.max(BUNNY_MIN_X, Math.min(BUNNY_MAX_X, bn.x + bunnyDir.current * BUNNY_SPEED));
+        if (bunnyX <= BUNNY_MIN_X) bunnyDir.current = 1;
+        if (bunnyX >= BUNNY_MAX_X) bunnyDir.current = -1;
+        bunnyRef.current = { ...bn, x: bunnyX };
+        setBunnyFacing(bunnyDir.current);
+        setBunny(bunnyRef.current);
+      }
 
       // Check egg collisions
       const remaining = eggsRef.current.filter(egg => !overlaps(hitbox, egg));
@@ -399,7 +532,8 @@ function App() {
       if (coinRef.current && overlaps(hitbox, coinRef.current)) {
         coinRef.current = null;
         setCoin(null);
-        setSave(s => ({ ...s, coins: s.coins + COIN_VALUE }));
+        const value = COIN_VALUE * (bonusLevelRef.current === levelNow ? BLUE_EGG_MULTIPLIER : 1);
+        setSave(s => ({ ...s, coins: s.coins + value }));
       }
       if (!coinRef.current && coinsOwed.current > 0) {
         const free = EGG_SPOTS.filter(
@@ -412,9 +546,28 @@ function App() {
         setCoin(coinRef.current);
       }
 
-      // Follower chick: stands where the player was FOLLOW_DELAY_FRAMES ago.
-      trail.current.push({ x: b.x, y: b.y, facing: dir !== 0 ? dir : trail.current[trail.current.length - 1]?.facing ?? 1 });
-      if (trail.current.length > FOLLOW_DELAY_FRAMES) setFollower(trail.current.shift()!);
+      // Knife: from level 5 one lies somewhere in the meadow while the bunny
+      // is still around; walking into it picks it up.
+      if (
+        levelNow >= KNIFE_LEVEL &&
+        bunnyAliveRef.current &&
+        !hasKnifeRef.current &&
+        !knifeRef.current
+      ) {
+        const free = EGG_SPOTS.filter(
+          spot =>
+            !eggsRef.current.some(egg => egg.x === spot.x && egg.y === spot.y) &&
+            !(coinRef.current && coinRef.current.x === spot.x && coinRef.current.y === spot.y) &&
+            !overlaps(hitbox, spot)
+        );
+        knifeRef.current = free[Math.floor(Math.random() * free.length)];
+        setKnife(knifeRef.current);
+      } else if (knifeRef.current && overlaps(hitbox, knifeRef.current)) {
+        knifeRef.current = null;
+        setKnife(null);
+        hasKnifeRef.current = true;
+        setHasKnife(true);
+      }
 
       // Storm cloud: from level 2 one appears above the screen at a random
       // place and travels straight down, all the way through the picture.
@@ -447,9 +600,17 @@ function App() {
       }
 
       // Check bunny and cloud collisions: each hit costs a heart, the last one ends the game.
+      let touchingBunny = bunnyAliveRef.current && overlaps(hitbox, bunnyRef.current);
+      if (touchingBunny && hasKnifeRef.current) {
+        // The knife is used up on the bunny, which is gone until the next game.
+        bunnyAliveRef.current = false;
+        setBunnyAlive(false);
+        hasKnifeRef.current = false;
+        setHasKnife(false);
+        touchingBunny = false;
+      }
       const touchingEnemy =
-        overlaps(hitbox, bunnyRef.current) ||
-        (cloudRef.current !== null && overlaps(hitbox, cloudRef.current));
+        touchingBunny || (cloudRef.current !== null && overlaps(hitbox, cloudRef.current));
       if (graceFrames.current === 0 && touchingEnemy) {
         livesRef.current -= 1;
         setLives(livesRef.current);
@@ -488,7 +649,18 @@ function App() {
     trail.current = [];
     setFollower({ x: 50, y: GROUND_LEVEL, facing: 1 });
     setShopOpen(false);
-    setPlayer({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false });
+    roomRef.current = MEADOW;
+    setRoom(MEADOW);
+    stepRef.current = 0;
+    bonusLevelRef.current = 0;
+    setBonusLevel(0);
+    knifeRef.current = null;
+    setKnife(null);
+    hasKnifeRef.current = false;
+    setHasKnife(false);
+    bunnyAliveRef.current = true;
+    setBunnyAlive(true);
+    setPlayer({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0 });
     setLives(MAX_LIVES);
     setPlatformYs(platformYsRef.current);
     setEggs(eggsRef.current);
@@ -571,6 +743,8 @@ function App() {
           <g
             style={{
               transform: isNight ? 'translateY(300px)' : 'translateY(0px)',
+              // Faded out as well, since nothing hides it below the horizon up in the sky
+              opacity: isNight ? 0 : 1,
               transition: NIGHT_TRANSITION,
             }}
           >
@@ -582,6 +756,7 @@ function App() {
           <g
             style={{
               transform: isNight ? 'translateY(0px)' : 'translateY(300px)',
+              opacity: isNight ? 1 : 0,
               transition: NIGHT_TRANSITION,
             }}
           >
@@ -638,6 +813,9 @@ function App() {
             </g>
           </g>
 
+          {/* The landscape is not visible from up in the sky */}
+          {room !== SKY && (
+          <g>
           {/* Distant mountains */}
           <path
             d="M0 330 L0 250 L90 170 L170 240 L260 150 L370 250 L450 200 L540 260 L640 160 L740 245 L800 205 L800 330 Z"
@@ -674,6 +852,8 @@ function App() {
             <path d="M0 330 L0 270 Q100 215 220 265 T440 260 T660 250 T800 265 L800 330 Z" fill="#ffffff" />
             <path d="M0 330 L0 300 Q80 265 180 295 T380 290 T580 295 T800 285 L800 330 Z" fill="#ffffff" />
           </mask>
+          </g>
+          )}
         </svg>
 
         {/* Score */}
@@ -707,7 +887,22 @@ function App() {
           >
             <Coin size={24} />
             <span className="font-bold text-amber-700">{save.coins} kr</span>
+            {/* Blue egg bonus: coins count double for the rest of this level */}
+            {doubleCoins && (
+              <span
+                className="text-xs font-bold text-white bg-blue-500 rounded-full px-1.5 py-0.5"
+                aria-label="Coins are worth double"
+              >
+                ×{BLUE_EGG_MULTIPLIER}
+              </span>
+            )}
           </div>
+          {/* Knife in hand */}
+          {hasKnife && (
+            <div className="bg-white px-2 py-1.5 rounded-full shadow-md" role="img" aria-label="Holding the knife">
+              <KnifeIcon size={26} />
+            </div>
+          )}
         </div>
 
         {/* Level-up banner */}
@@ -719,17 +914,94 @@ function App() {
           </div>
         )}
 
-        {/* Ground */}
-        <div className="absolute bottom-0 w-full h-20 bg-gradient-to-b from-green-500 to-green-600">
-          {/* Night tint */}
-          <div
-            className="absolute inset-0 bg-slate-900"
-            style={{ opacity: isNight ? 0.5 : 0, transition: NIGHT_TRANSITION }}
-          />
-        </div>
+        {/* Ground (there is none in the sky) */}
+        {room !== SKY && (
+          <div className="absolute bottom-0 w-full h-20 bg-gradient-to-b from-green-500 to-green-600">
+            {/* Night tint */}
+            <div
+              className="absolute inset-0 bg-slate-900"
+              style={{ opacity: isNight ? 0.5 : 0, transition: NIGHT_TRANSITION }}
+            />
+          </div>
+        )}
+
+        {/* Signposts between the meadow and the trampoline place */}
+        {room === MEADOW && <Signpost x={762} label="→" />}
+        {room === TRAMPOLINE_PLACE && <Signpost x={8} label="←" />}
+
+        {/* Trampoline */}
+        {room === TRAMPOLINE_PLACE && (
+          <svg
+            className="absolute"
+            style={{ transform: `translate(${TRAMPOLINE.x - 6}px, ${TRAMPOLINE.y}px)` }}
+            width="92"
+            height="32"
+            viewBox="0 0 92 32"
+            role="img"
+            aria-label="Trampoline"
+          >
+            {/* Legs */}
+            <g stroke="#475569" strokeWidth="3" strokeLinecap="round">
+              <path d="M12 10 L6 30" />
+              <path d="M80 10 L86 30" />
+              <path d="M46 10 V30" />
+            </g>
+            {/* Springs */}
+            <path
+              d="M10 8 l3 4 l3 -4 l3 4 M73 12 l3 -4 l3 4 l3 -4"
+              stroke="#94a3b8"
+              strokeWidth="1.5"
+              fill="none"
+            />
+            {/* Frame and mat */}
+            <rect x="3" y="3" width="86" height="9" rx="4.5" fill="#2563eb" stroke="#1e3a8a" strokeWidth="1.5" />
+            <rect x="12" y="4.5" width="68" height="4" rx="2" fill="#0f172a" />
+          </svg>
+        )}
+
+        {/* The cloud up in the sky, and the blue egg lying on it */}
+        {room === SKY && (
+          <>
+            <svg
+              className="absolute"
+              style={{ transform: `translate(${SKY_CLOUD.x - 30}px, ${SKY_CLOUD.y - 22}px)` }}
+              width={SKY_CLOUD.width + 60}
+              height="100"
+              viewBox={`0 0 ${SKY_CLOUD.width + 60} 100`}
+              role="img"
+              aria-label="Cloud to stand on"
+            >
+              <g fill="#ffffff" stroke="#bae6fd" strokeWidth="2">
+                <path d="M40 78 Q4 78 6 54 Q8 34 34 34 Q40 16 70 22 Q88 10 112 22 L290 22 Q318 8 344 24 Q372 22 378 42 Q398 46 394 62 Q390 78 360 78 Z" />
+              </g>
+              <g fill="#e0f2fe">
+                <ellipse cx="110" cy="62" rx="46" ry="9" />
+                <ellipse cx="270" cy="66" rx="60" ry="8" />
+              </g>
+            </svg>
+            {!doubleCoins && (
+              <div
+                className="absolute"
+                style={{ transform: `translate(${BLUE_EGG.x}px, ${BLUE_EGG.y}px)` }}
+              >
+                <Egg
+                  aria-label="Blue egg"
+                  className="w-8 h-8 text-blue-800 fill-blue-500 drop-shadow-[0_0_6px_rgba(59,130,246,0.9)]"
+                />
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Knife to pick up */}
+        {room === MEADOW && knife && (
+          <div className="absolute" style={{ transform: `translate(${knife.x}px, ${knife.y}px)` }}>
+            <KnifeIcon size={30} />
+          </div>
+        )}
 
         {/* Platforms */}
-        {PLATFORMS.map((platform, index) => (
+        {room === MEADOW && PLATFORMS.map((platform, index) => (
           <div
             key={index}
             className="absolute bg-gradient-to-b from-brown-400 to-brown-600 rounded-md"
@@ -762,8 +1034,9 @@ function App() {
             >
               {/* Legs and feet */}
               <g stroke="#f97316" strokeWidth="2.5" strokeLinecap="round" fill="none">
-                <path d="M19 38 V46 M15 46 H23" />
-                <path d="M27 38 V46 M23 46 H31" />
+                {/* Each leg swings around its hip, the two in opposite directions */}
+                <path d="M19 38 V46 M15 46 H23" transform={`rotate(${legAngle} 19 38)`} />
+                <path d="M27 38 V46 M23 46 H31" transform={`rotate(${-legAngle} 27 38)`} />
               </g>
               {/* Tail feathers */}
               <g fill="#fef3c7" stroke="#a16207" strokeWidth="1.2" strokeLinejoin="round">
@@ -797,18 +1070,78 @@ function App() {
               {/* Beak */}
               <path d="M42 12 L48 15.5 L42 18 Z" fill="#f97316" />
               {/* Eye */}
-              <circle cx="37.5" cy="13" r="1.7" fill="#111827" />
+              {/* Eye: glows red while holding the knife */}
+              {hasKnife ? (
+                <circle cx="37.5" cy="13" r="2.4" fill="#ef4444" stroke="#7f1d1d" strokeWidth="0.6" />
+              ) : (
+                <circle cx="37.5" cy="13" r="1.7" fill="#111827" />
+              )}
             </svg>
           ) : (
-            // Starter chick: drawn a little taller than the hitbox, feet on the ground
-            <img
-              src={chickImage}
-              alt="Chick"
-              draggable={false}
-              className="absolute max-w-none select-none"
-              // The picture itself looks to the left, so it is mirrored when walking right.
-              style={{ left: 2, top: -10, width: 36, height: 54, transform: `scaleX(${-player.facing})` }}
-            />
+            // Starter chick: drawn a little taller than the hitbox, feet on the ground.
+            // The picture itself looks to the left, so everything is mirrored when walking right.
+            <div className="absolute inset-0" style={{ transform: `scaleX(${-player.facing})` }}>
+              {/* Legs: drawn here so they can swing; the picture's own feet are cut off below */}
+              <svg
+                className="absolute pointer-events-none"
+                style={{ left: 0, top: 0 }}
+                width="40"
+                height="40"
+                viewBox="0 0 40 40"
+                overflow="visible"
+                aria-hidden="true"
+              >
+                {[
+                  { x: 15.5, angle: legAngle },
+                  { x: 26.5, angle: -legAngle },
+                ].map(leg => (
+                  <g
+                    key={leg.x}
+                    data-leg
+                    transform={`rotate(${leg.angle} ${leg.x} 33)`}
+                    stroke="#f59e0b"
+                    strokeLinecap="round"
+                    fill="none"
+                  >
+                    <path d={`M${leg.x} 33 V42.5`} strokeWidth="3" />
+                    <path
+                      d={`M${leg.x} 42.5 l-5.5 1.2 M${leg.x} 42.5 l-4.5 -1.2 M${leg.x} 42.5 l2.5 1`}
+                      strokeWidth="2"
+                    />
+                  </g>
+                ))}
+              </svg>
+              <img
+                src={chickImage}
+                alt="Chick"
+                draggable={false}
+                className="absolute max-w-none select-none"
+                style={{ left: 2, top: -10, width: 36, height: 54, clipPath: 'inset(0 0 15% 0)' }}
+              />
+              {/* Eyes: glow red while holding the knife */}
+              {hasKnife && (
+                <svg
+                  className="absolute pointer-events-none"
+                  style={{ left: 0, top: 0 }}
+                  width="40"
+                  height="40"
+                  viewBox="0 0 40 40"
+                  overflow="visible"
+                  role="img"
+                  aria-label="Red eyes"
+                >
+                  {[
+                    { x: 9.8, y: 12.2 },
+                    { x: 25.4, y: 8.4 },
+                  ].map(eye => (
+                    <g key={eye.x}>
+                      <circle cx={eye.x} cy={eye.y} r="3.3" fill="#ef4444" stroke="#7f1d1d" strokeWidth="0.8" />
+                      <circle cx={eye.x - 0.9} cy={eye.y - 1.1} r="0.9" fill="#ffffff" />
+                    </g>
+                  ))}
+                </svg>
+              )}
+            </div>
           )}
 
           {/* Tears: fall from the eyes for as long as the player is crying */}
@@ -886,14 +1219,14 @@ function App() {
         )}
 
         {/* Coin */}
-        {coin && (
+        {room === MEADOW && coin && (
           <div className="absolute" style={{ transform: `translate(${coin.x}px, ${coin.y}px)` }}>
             <Coin />
           </div>
         )}
 
         {/* Eggs */}
-        {eggs.map((egg, index) => (
+        {room === MEADOW && eggs.map((egg, index) => (
           <div
             key={index}
             className="absolute"
@@ -913,7 +1246,8 @@ function App() {
           </div>
         ))}
 
-        {/* Bunny */}
+        {/* Bunny (gone for the rest of the game once it has been beaten with the knife) */}
+        {room === MEADOW && bunnyAlive && (
         <div
           className="absolute"
           style={{
@@ -946,9 +1280,10 @@ function App() {
             <circle cx="0" cy="0" r="2.5" fill="#facc15" />
           </svg>
         </div>
+        )}
 
         {/* Storm cloud */}
-        {cloud && (
+        {room === MEADOW && cloud && (
           <svg
             className="absolute"
             style={{ transform: `translate(${cloud.x}px, ${cloud.y}px)`, left: -5, top: -8 }}
