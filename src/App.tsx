@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Egg, Circle } from 'lucide-react';
+import { Egg, Circle, Heart } from 'lucide-react';
 import bunnyImage from './assets/bunny.png';
 
 interface Position {
@@ -94,7 +94,25 @@ const nextEggs = (previous: Position[], playerBox: GameObject): Position[] => {
   return candidates.slice(0, EGGS_PER_BATCH);
 };
 
-const initialBody =() => ({ x: 50, y: GROUND_LEVEL, vx: 0, vy: 0, onGround: true });
+const initialBody = () => ({
+  x: 50,
+  y: GROUND_LEVEL,
+  vx: 0,
+  vy: 0,
+  onGround: true,
+  platform: null as number | null, // Index of the platform being stood on
+});
+
+const MAX_LIVES = 2;
+const HIT_GRACE_FRAMES = 120; // Invulnerable (and blinking) for 2 seconds after a hit
+
+// From this level on the platforms bob up and down.
+const MOVING_PLATFORMS_LEVEL = 4;
+const PLATFORM_TRAVEL = 30; // px above and below the resting height
+const PLATFORM_PERIOD_FRAMES = 200;
+
+const restingPlatformYs = () => PLATFORMS.map(p => p.y);
+const levelForScore = (score: number) => Math.floor(score / POINTS_PER_LEVEL) + 1;
 const initialBunny = (): GameObject => ({ x: 700, y: GROUND_LEVEL, width: 40, height: 40 });
 
 const overlaps = (a: GameObject, b: Position & Partial<GameObject>) => {
@@ -115,14 +133,22 @@ function App() {
   const bunnyDir = useRef(-1); // -1 = walking left, 1 = walking right
   const [bunnyFacing, setBunnyFacing] = useState(-1);
 
-  const [player, setPlayer] = useState({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1 });
+  const scoreRef = useRef(0);
+  const livesRef = useRef(MAX_LIVES);
+  const graceFrames = useRef(0);
+  const platformYsRef = useRef<number[]>(restingPlatformYs());
+  const platformClock = useRef(0);
+
+  const [player, setPlayer] = useState({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, blink: false });
+  const [lives, setLives] = useState(MAX_LIVES);
+  const [platformYs, setPlatformYs] = useState<number[]>(platformYsRef.current);
   const [eggs, setEggs] = useState<EggItem[]>(eggsRef.current);
   const [bunny, setBunny] = useState<GameObject>(bunnyRef.current);
   const [score, setScore] = useState<number>(0);
   const [levelUp, setLevelUp] = useState<number | null>(null);
 
   // The level follows directly from the score: one level per 20 points.
-  const level = Math.floor(score / POINTS_PER_LEVEL) + 1;
+  const level = levelForScore(score);
   const isHen = level >= HEN_LEVEL;
 
   // Briefly announce each new level.
@@ -175,6 +201,21 @@ function App() {
       const b = body.current;
       const k = keys.current;
 
+      // Platforms: from level 4 they bob up and down, neighbours in opposite
+      // directions. The clock starts at zero so the motion begins smoothly.
+      const prevYs = platformYsRef.current;
+      if (levelForScore(scoreRef.current) >= MOVING_PLATFORMS_LEVEL) {
+        platformClock.current += 1;
+        const wave = Math.sin((platformClock.current / PLATFORM_PERIOD_FRAMES) * 2 * Math.PI);
+        platformYsRef.current = PLATFORMS.map(
+          (p, i) => p.y + PLATFORM_TRAVEL * wave * (i % 2 === 0 ? 1 : -1)
+        );
+        setPlatformYs(platformYsRef.current);
+      }
+      const newYs = platformYsRef.current;
+      // A player standing on a platform rides along with it.
+      if (b.platform !== null) b.y = newYs[b.platform] - PLAYER_SIZE;
+
       // Horizontal: accelerate towards the held direction, otherwise slow down.
       const dir = (k.right ? 1 : 0) - (k.left ? 1 : 0);
       if (dir !== 0) {
@@ -196,15 +237,21 @@ function App() {
       b.vy += GRAVITY;
       let nextY = b.y + b.vy;
       b.onGround = false;
+      b.platform = null;
       if (b.vy > 0) {
-        for (const platform of PLATFORMS) {
+        for (let i = 0; i < PLATFORMS.length; i++) {
+          const platform = PLATFORMS[i];
           const overPlatform = b.x < platform.x + platform.width && b.x + PLAYER_SIZE > platform.x;
           const feetBefore = b.y + PLAYER_SIZE;
           const feetAfter = nextY + PLAYER_SIZE;
-          if (overPlatform && feetBefore <= platform.y && feetAfter >= platform.y) {
-            nextY = platform.y - PLAYER_SIZE;
+          // The feet were above the platform (where it was or is now) and
+          // would end up at or below its current top.
+          const wasAbove = feetBefore <= Math.max(prevYs[i], newYs[i]) + 0.01;
+          if (overPlatform && wasAbove && feetAfter >= newYs[i]) {
+            nextY = newYs[i] - PLAYER_SIZE;
             b.vy = 0;
             b.onGround = true;
+            b.platform = i;
             break;
           }
         }
@@ -213,10 +260,13 @@ function App() {
         nextY = GROUND_LEVEL;
         b.vy = 0;
         b.onGround = true;
+        b.platform = null;
       }
       b.y = nextY;
 
-      setPlayer(p => ({ x: b.x, y: b.y, vx: b.vx, facing: dir !== 0 ? dir : p.facing }));
+      if (graceFrames.current > 0) graceFrames.current -= 1;
+      const blink = graceFrames.current > 0 && Math.floor(graceFrames.current / 6) % 2 === 0;
+      setPlayer(p => ({ x: b.x, y: b.y, vx: b.vx, facing: dir !== 0 ? dir : p.facing, blink }));
 
       // Move bunny
       const bn = bunnyRef.current;
@@ -248,12 +298,19 @@ function App() {
           }));
         }
         setEggs(eggsRef.current);
-        setScore(s => s + points);
+        scoreRef.current += points;
+        setScore(scoreRef.current);
       }
 
-      // Check bunny collision
-      if (overlaps(hitbox, bunnyRef.current)) {
-        setGameOver(true);
+      // Check bunny collision: each hit costs a heart, the last one ends the game.
+      if (graceFrames.current === 0 && overlaps(hitbox, bunnyRef.current)) {
+        livesRef.current -= 1;
+        setLives(livesRef.current);
+        if (livesRef.current <= 0) {
+          setGameOver(true);
+        } else {
+          graceFrames.current = HIT_GRACE_FRAMES;
+        }
       }
     }, 1000 / 60);
 
@@ -269,7 +326,14 @@ function App() {
     bunnyDir.current = -1;
     setBunnyFacing(-1);
     keys.current = { left: false, right: false, jump: false };
-    setPlayer({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1 });
+    scoreRef.current = 0;
+    livesRef.current = MAX_LIVES;
+    graceFrames.current = 0;
+    platformClock.current = 0;
+    platformYsRef.current = restingPlatformYs();
+    setPlayer({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, blink: false });
+    setLives(MAX_LIVES);
+    setPlatformYs(platformYsRef.current);
     setEggs(eggsRef.current);
     setBunny(bunnyRef.current);
     setScore(0);
@@ -349,6 +413,21 @@ function App() {
           <div className="bg-white px-4 py-2 rounded-full shadow-md">
             <p className="text-lg font-bold text-amber-600">Level {level}</p>
           </div>
+          {/* Lives */}
+          <div
+            className="bg-white px-3 py-2 rounded-full shadow-md flex items-center gap-1"
+            role="img"
+            aria-label={`Lives: ${lives} of ${MAX_LIVES}`}
+          >
+            {Array.from({ length: MAX_LIVES }, (_, i) => (
+              <Heart
+                key={i}
+                className={
+                  i < lives ? 'w-7 h-7 text-red-500 fill-red-500' : 'w-7 h-7 text-gray-300'
+                }
+              />
+            ))}
+          </div>
         </div>
 
         {/* Level-up banner */}
@@ -369,7 +448,7 @@ function App() {
             key={index}
             className="absolute bg-gradient-to-b from-brown-400 to-brown-600 rounded-md"
             style={{
-              transform: `translate(${platform.x}px, ${platform.y}px)`,
+              transform: `translate(${platform.x}px, ${platformYs[index]}px)`,
               width: platform.width + 'px',
               height: platform.height + 'px',
               backgroundColor: '#8B4513',
@@ -382,6 +461,8 @@ function App() {
           className="absolute"
           style={{
             transform: `translate(${player.x}px, ${player.y}px) rotate(${player.vx * 2}deg)`,
+            // Blinks while invulnerable after being hit by the bunny
+            opacity: player.blink ? 0.25 : 1,
           }}
         >
           {/* Chicken Body: mirrored to face the way it is moving */}
