@@ -358,6 +358,13 @@ const FLIP_DEGREES_PER_FRAME = 15; // The somersault takes 24 frames
 // `y` is where the feet of the 40px player box come to rest.
 const TRAMPOLINE = { x: 360, y: 314, width: 80 };
 const SKY_CLOUD = { x: 230, y: 250, width: 340 };
+// The three eggs at the trampoline place: one on the ground, one to jump for,
+// and one high above the trampoline that only the trampoline reaches.
+const TRAMPOLINE_EGGS: Position[] = [
+  { x: 170, y: 300 },
+  { x: 620, y: 205 },
+  { x: TRAMPOLINE.x + TRAMPOLINE.width / 2 - 15, y: 110 },
+];
 const FLOAT_SPEED = -4; // px per frame while floating upwards
 // The second trampoline stands on the left end of the sky cloud and shoots the
 // player up to a big cloud, half the picture wide, where the rooster lives.
@@ -540,6 +547,8 @@ function App() {
   const rideRef = useRef({ ...startOfRide(), ...DEV_START?.ride });
   const [ride, setRide] = useState(rideRef.current);
   // Which of the coins and eggs in the fall past the cat have been grabbed this time down.
+  const trampolineEggsTaken = useRef<boolean[]>(TRAMPOLINE_EGGS.map(() => false));
+  const [trampolineEggs, setTrampolineEggs] = useState<boolean[]>(trampolineEggsTaken.current);
   const catLootTaken = useRef<boolean[]>(CAT_LOOT.map(() => false));
   const [catLoot, setCatLoot] = useState<boolean[]>(catLootTaken.current);
   const skyHeartRef = useRef<SkyHeartState>('floating');
@@ -929,6 +938,8 @@ function App() {
               nextY = TRAMPOLINE.y - PLAYER_SIZE;
               b.floating = true;
               b.floatSpeed = FLOAT_SPEED;
+              // Up from the middle of the mat, straight through the egg above it.
+              b.x = TRAMPOLINE.x + (TRAMPOLINE.width - PLAYER_SIZE) / 2;
             }
           } else if (room in SKY_CLOUDS) {
             const cloud = SKY_CLOUDS[room];
@@ -1000,6 +1011,11 @@ function App() {
         if (nextRoom === CAT_FALL) {
           catLootTaken.current = CAT_LOOT.map(() => false);
           setCatLoot(catLootTaken.current);
+        }
+        // Likewise the three eggs at the trampoline place are back on every visit.
+        if (nextRoom === TRAMPOLINE_PLACE) {
+          trampolineEggsTaken.current = TRAMPOLINE_EGGS.map(() => false);
+          setTrampolineEggs(trampolineEggsTaken.current);
         }
       }
 
@@ -1082,6 +1098,22 @@ function App() {
       ) {
         bonusLevelRef.current = levelNow;
         setBonusLevel(levelNow);
+      }
+
+      // The three eggs at the trampoline place: a point each.
+      if (roomRef.current === TRAMPOLINE_PLACE) {
+        let points = 0;
+        TRAMPOLINE_EGGS.forEach((egg, i) => {
+          if (!trampolineEggsTaken.current[i] && overlaps(hitbox, egg)) {
+            trampolineEggsTaken.current[i] = true;
+            points += 1;
+          }
+        });
+        if (points > 0) {
+          setTrampolineEggs([...trampolineEggsTaken.current]);
+          scoreRef.current += points;
+          setScore(scoreRef.current);
+        }
       }
 
       // Falling past the cat there are a great many coins and eggs to grab on
@@ -1966,6 +1998,21 @@ function App() {
 
         {/* Trampoline */}
         {room === TRAMPOLINE_PLACE && <Trampoline {...TRAMPOLINE} />}
+        {/* Three eggs here and there; the one above the trampoline is reached by bouncing on it */}
+        {room === TRAMPOLINE_PLACE &&
+          TRAMPOLINE_EGGS.map(
+            (egg, i) =>
+              !trampolineEggs[i] && (
+                <div
+                  key={i}
+                  className="absolute"
+                  data-trampoline-egg
+                  style={{ transform: `translate(${egg.x}px, ${egg.y}px)` }}
+                >
+                  <Egg className="w-8 h-8 text-white" />
+                </div>
+              )
+          )}
 
         {/* The big cloud high up, half the picture wide, with the rooster on it */}
         {room === HIGH_SKY && (
