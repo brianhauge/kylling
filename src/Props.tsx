@@ -14,12 +14,38 @@ export function KnifeIcon({ size = 30 }: { size?: number }) {
   );
 }
 
-/** The fisher at the beach: stands on the sand at `x`, rod out over the water. */
-export function Fisher({ x }: { x: number }) {
+/**
+ * The fisher at the beach: stands with his feet at (x + 32, y + 106), rod out
+ * in front of him. Drawn facing right; `facing` -1 turns him round.
+ *
+ * When he has been refused the boat he takes his hat off (`hatOff`), the rod
+ * turns into a sword (`sword`, 0 → 1) and he swings it (`swing`, 0 = raised
+ * ready, 1 = brought down).
+ */
+export function Fisher({
+  x,
+  y = 238,
+  facing = 1,
+  hatOff = false,
+  sword = 0,
+  swing = 0,
+  withLine = true,
+}: {
+  x: number;
+  y?: number;
+  facing?: number;
+  hatOff?: boolean;
+  sword?: number;
+  swing?: number;
+  withLine?: boolean;
+}) {
+  // The arm, and whatever is in the hand, turn around the shoulder. With the
+  // rod it rests at 0°; with the sword it is raised back and then swung down.
+  const armAngle = sword > 0 ? -55 * Math.min(1, sword * 1.5) + swing * 105 : 0;
   return (
     <svg
       className="absolute"
-      style={{ transform: `translate(${x}px, 238px)` }}
+      style={{ transform: `translate(${x}px, ${y}px) scaleX(${facing})`, transformOrigin: '32px 53px' }}
       width="130"
       height="110"
       viewBox="0 0 130 110"
@@ -27,10 +53,32 @@ export function Fisher({ x }: { x: number }) {
       role="img"
       aria-label="Fisher"
     >
-      {/* Fishing rod, line and float */}
-      <path d="M58 68 L118 8" stroke="#78350f" strokeWidth="2.5" strokeLinecap="round" />
-      <path d="M118 8 V96" stroke="#f1f5f9" strokeWidth="1" />
-      <circle cx="118" cy="97" r="3.5" fill="#ef4444" stroke="#ffffff" strokeWidth="1" />
+      {/* The fishing line and float stay in the water (while there is still a rod) */}
+      {withLine && sword === 0 && (
+        <>
+          <path d="M118 8 V96" stroke="#f1f5f9" strokeWidth="1" />
+          <circle cx="118" cy="97" r="3.5" fill="#ef4444" stroke="#ffffff" strokeWidth="1" />
+        </>
+      )}
+      <g transform={`rotate(${armAngle} 42 58)`}>
+        {/* Fishing rod, fading away as it turns into... */}
+        <path
+          d={`M58 68 L${118 - sword * 22} ${8 + sword * 22}`}
+          stroke="#78350f"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          opacity={1 - sword}
+        />
+        {/* ...a sword: blade, guard and grip along the same line */}
+        {sword > 0 && (
+          <g data-sword opacity={sword} transform="rotate(-45 59 66)">
+            <path d="M62 62.5 H104 L112 66 L104 69.5 H62 Z" fill="#e2e8f0" stroke="#475569" strokeWidth="1.2" strokeLinejoin="round" />
+            <path d="M64 66 H104" stroke="#94a3b8" strokeWidth="1" />
+            <rect x="59" y="58" width="4" height="16" rx="1.5" fill="#ca8a04" stroke="#713f12" strokeWidth="0.8" />
+            <rect x="50" y="63.5" width="10" height="5" rx="2" fill="#78350f" />
+          </g>
+        )}
+      </g>
       {/* Boots and trousers */}
       <rect x="17" y="98" width="13" height="8" rx="3" fill="#1f2937" />
       <rect x="34" y="98" width="13" height="8" rx="3" fill="#1f2937" />
@@ -38,16 +86,34 @@ export function Fisher({ x }: { x: number }) {
       <rect x="35" y="78" width="9" height="22" fill="#1e3a8a" />
       {/* Raincoat */}
       <rect x="15" y="47" width="34" height="35" rx="9" fill="#facc15" stroke="#a16207" strokeWidth="1.5" />
-      {/* Arm and hand holding the rod */}
-      <path d="M42 58 L58 65" stroke="#facc15" strokeWidth="8" strokeLinecap="round" />
-      <circle cx="59" cy="66" r="4" fill="#fcd9b6" stroke="#b45309" strokeWidth="0.8" />
-      {/* Head, beard and eye */}
+      {/* Arm and hand holding the rod or the sword */}
+      <g transform={`rotate(${armAngle} 42 58)`}>
+        <path d="M42 58 L58 65" stroke="#facc15" strokeWidth="8" strokeLinecap="round" />
+        <circle cx="59" cy="66" r="4" fill="#fcd9b6" stroke="#b45309" strokeWidth="0.8" />
+      </g>
+      {/* Head, beard and eye (with an angry brow once the hat is off) */}
       <circle cx="32" cy="36" r="11" fill="#fcd9b6" stroke="#b45309" strokeWidth="0.8" />
       <path d="M21.5 38 Q32 58 42.5 38 Q32 46 21.5 38 Z" fill="#f8fafc" stroke="#cbd5e1" strokeWidth="0.8" />
       <circle cx="37" cy="33.5" r="1.4" fill="#1f2937" />
-      {/* Hat */}
-      <path d="M20 29 Q32 10 44 29 Z" fill="#15803d" />
-      <rect x="15" y="27" width="34" height="4.5" rx="2.2" fill="#166534" />
+      {hatOff ? (
+        <>
+          <path d="M33 29.5 L41 32" stroke="#1f2937" strokeWidth="1.6" strokeLinecap="round" />
+          {/* A few hairs on the bare head */}
+          <path d="M27 26 q1 -5 3 0 M32 25 q1 -5 3 0" fill="none" stroke="#cbd5e1" strokeWidth="1.2" strokeLinecap="round" />
+          {/* The hat, taken off and held in the other hand */}
+          <g data-hat-off transform="translate(-14 48) rotate(-20 32 28)">
+            <path d="M20 29 Q32 10 44 29 Z" fill="#15803d" />
+            <rect x="15" y="27" width="34" height="4.5" rx="2.2" fill="#166534" />
+          </g>
+          <path d="M22 58 L12 70" stroke="#facc15" strokeWidth="7" strokeLinecap="round" />
+        </>
+      ) : (
+        <>
+          {/* Hat */}
+          <path d="M20 29 Q32 10 44 29 Z" fill="#15803d" />
+          <rect x="15" y="27" width="34" height="4.5" rx="2.2" fill="#166534" />
+        </>
+      )}
     </svg>
   );
 }
@@ -597,6 +663,69 @@ export function Boat({ x, y }: { x: number; y: number }) {
       />
       <path d="M0 0 H130 L127 8 H3 Z" fill="#92400e" />
       <path d="M8 18 H122 M14 30 H116" stroke="#78350f" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+/**
+ * The big cat in the background of the long fall: a face that fills much of
+ * the 800×400 picture, with very large eyes and a very happy mouth.
+ */
+export function BigCat() {
+  return (
+    <svg
+      className="absolute inset-0 w-full h-full pointer-events-none"
+      viewBox="0 0 800 400"
+      preserveAspectRatio="none"
+      role="img"
+      aria-label="Big cat"
+    >
+      {/* Ears */}
+      <g fill="#fb923c" stroke="#9a3412" strokeWidth="4" strokeLinejoin="round">
+        <path d="M232 150 L212 18 L340 82 Z" />
+        <path d="M568 150 L588 18 L460 82 Z" />
+      </g>
+      <path d="M248 118 L234 48 L306 86 Z" fill="#fda4af" />
+      <path d="M552 118 L566 48 L494 86 Z" fill="#fda4af" />
+      {/* Head */}
+      <ellipse cx="400" cy="226" rx="212" ry="170" fill="#fb923c" stroke="#9a3412" strokeWidth="4" />
+      {/* Tabby stripes on the forehead and cheeks */}
+      <g fill="none" stroke="#c2410c" strokeWidth="9" strokeLinecap="round">
+        <path d="M400 66 V104 M368 72 L376 106 M432 72 L424 106" />
+        <path d="M200 216 H232 M204 248 H238 M600 216 H568 M596 248 H562" />
+      </g>
+      {/* Pale muzzle */}
+      <ellipse cx="400" cy="296" rx="112" ry="78" fill="#ffedd5" />
+      {/* Very large eyes */}
+      <g>
+        <ellipse cx="314" cy="198" rx="64" ry="70" fill="#ffffff" stroke="#1f2937" strokeWidth="4" />
+        <ellipse cx="486" cy="198" rx="64" ry="70" fill="#ffffff" stroke="#1f2937" strokeWidth="4" />
+        <ellipse cx="320" cy="204" rx="40" ry="50" fill="#16a34a" />
+        <ellipse cx="480" cy="204" rx="40" ry="50" fill="#16a34a" />
+        <ellipse cx="322" cy="206" rx="24" ry="40" fill="#0f172a" />
+        <ellipse cx="478" cy="206" rx="24" ry="40" fill="#0f172a" />
+        <circle cx="336" cy="182" r="13" fill="#ffffff" />
+        <circle cx="492" cy="182" r="13" fill="#ffffff" />
+        <circle cx="312" cy="226" r="6" fill="#ffffff" />
+        <circle cx="468" cy="226" r="6" fill="#ffffff" />
+      </g>
+      {/* Nose */}
+      <path d="M382 270 H418 L400 290 Z" fill="#f472b6" stroke="#9d174d" strokeWidth="3" strokeLinejoin="round" />
+      {/* A very happy, wide open mouth */}
+      <path
+        d="M400 290 V304 M300 300 Q400 318 500 300 Q486 384 400 384 Q314 384 300 300 Z"
+        fill="#7f1d1d"
+        stroke="#1f2937"
+        strokeWidth="4"
+        strokeLinejoin="round"
+      />
+      <path d="M344 350 Q400 326 456 350 Q440 380 400 380 Q360 380 344 350 Z" fill="#fb7185" />
+      <path d="M326 306 L338 326 L350 309 Z M474 306 L462 326 L450 309 Z" fill="#ffffff" />
+      {/* Whiskers */}
+      <g stroke="#1f2937" strokeWidth="3" strokeLinecap="round">
+        <path d="M286 290 L168 268 M286 304 L164 306 M288 318 L172 344" />
+        <path d="M514 290 L632 268 M514 304 L636 306 M512 318 L628 344" />
+      </g>
     </svg>
   );
 }

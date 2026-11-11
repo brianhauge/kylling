@@ -4,6 +4,7 @@ import chickImage from './assets/chick.png';
 import { Coin, Shop, Wearables } from './Shop';
 import {
   Angel,
+  BigCat,
   Boat,
   CloudPlatform,
   Coral,
@@ -170,9 +171,12 @@ const UNDERWATER = 4; // Down in the sea off the beach
 const HIGH_SKY = 5; // Higher up still, reached from the trampoline on the sky cloud
 const HIGH_SKY_WEST = 6; // The next place along the big cloud, out of the left side
 const DEEP_SEA = 7; // More sea, out of the right side of the first one
+const CAT_FALL = 10; // The long fall from the far cloud, past the big cat, down to the meadow
+const CAT_FALL_SPEED = 3; // px per frame: slow enough to get a good look at the cat
 const DARK = 8; // The dark place below the hole in the seabed
 const SEA_TOP = 9; // The open sea seen from above the water, with the boat
 type Room =
+  | typeof CAT_FALL
   | typeof DARK
   | typeof SEA_TOP
   | typeof DEEP_SEA
@@ -314,8 +318,22 @@ const BOAT_SEAT_X = 44; // Where the player stands in the boat
 const BOAT_DECK_Y = 304; // The player's feet in the boat (it bobs a little around this)
 const BOAT_ACCEL = 0.35;
 const BOAT_DRAG = 0.93; // Top speed works out at about 4.6 px per frame
+const BEACH_SUN: Position = { x: 610, y: 318 }; // The setting sun, on the horizon over the sea
+// The boat run ashore at the beach, and the fisher's question about it.
+const SHORE_BOAT_X = WORLD_WIDTH / 2 + 6; // Where the boat stops against the sand
+const FISHER_BOARD_FRAMES = 50; // Said yes: how long he takes to climb into the boat...
+const FISHER_SAIL_FRAMES = 330; // ...and to sail off into the sun
+const SWORD_START_FRAME = 25; // Said no: when the rod starts turning into a sword...
+const SWORD_READY_FRAME = 145; // ...when it is a sword...
+const SWORD_HIT_FRAME = 162; // ...and when the swing lands
+const startOfShore = () => ({
+  boat: 'none' as 'none' | 'landed' | 'leaving' | 'gone',
+  answer: null as 'yes' | 'no' | null,
+  frames: 0, // Since the answer
+  fisher: 'here' as 'here' | 'gone',
+});
 const startOfRide = () => ({
-  phase: 'falling' as 'falling' | 'riding' | 'dropped' | 'boat',
+  phase: 'falling' as 'falling' | 'riding' | 'dropped' | 'boat' | 'ashore',
   pause: 0,
   angelX: 0,
   angelY: ANGEL_BACK_Y - ANGEL_SEAT_Y,
@@ -363,6 +381,23 @@ const BLUE_EGG_MULTIPLIER = 2; // Coins are worth this much more for the rest of
 const DEV_START_SCORE = import.meta.env.DEV
   ? Math.max(0, Number(new URLSearchParams(window.location.search).get('score')) || 0)
   : 0;
+// Likewise "?start=boat" (or west, sea, deepsea) starts the first game in that
+// place instead of in the meadow.
+const DEV_STARTS: {
+  [name: string]: {
+    room: Room;
+    body?: { x: number; y: number };
+    ride?: { phase: 'boat'; boatX: number };
+  };
+} = {
+  boat: { room: BEACH, ride: { phase: 'boat', boatX: 640 } },
+  west: { room: HIGH_SKY_WEST, body: { x: 600, y: HIGH_WEST_CLOUD.y - PLAYER_SIZE } },
+  sea: { room: UNDERWATER, body: { x: 400, y: 80 } },
+  deepsea: { room: DEEP_SEA, body: { x: 100, y: 80 } },
+};
+const DEV_START = import.meta.env.DEV
+  ? DEV_STARTS[new URLSearchParams(window.location.search).get('start') ?? ''] ?? null
+  : null;
 
 const KNIFE_LEVEL = 5; // From this level a knife lies in the meadow
 const WALK_CYCLE_SPEED = 0.22; // Leg swing (radians) per px walked
@@ -411,7 +446,7 @@ const overlaps = (a: GameObject, b: Position & Partial<GameObject>) => {
 function App() {
   // The simulation lives in refs so the game loop always sees current values;
   // the state below is only what gets drawn.
-  const body = useRef(initialBody());
+  const body = useRef({ ...initialBody(), ...DEV_START?.body });
   const keys = useRef({ left: false, right: false, down: false, jump: false, jumpPressed: false });
   const eggsRef = useRef<EggItem[]>(initialEggs());
   const lastBatch = useRef<Position[]>(eggsRef.current);
@@ -462,8 +497,8 @@ function App() {
 
   // Which place the player is in, the walking cycle, and the level in which
   // the blue egg was last taken (its bonus lasts for the rest of that level).
-  const roomRef = useRef<Room>(MEADOW);
-  const [room, setRoom] = useState<Room>(MEADOW);
+  const roomRef = useRef<Room>(DEV_START?.room ?? MEADOW);
+  const [room, setRoom] = useState<Room>(DEV_START?.room ?? MEADOW);
   const stepRef = useRef(0);
   const bonusLevelRef = useRef(0);
   const [bonusLevel, setBonusLevel] = useState(0);
@@ -491,7 +526,11 @@ function App() {
   // The heart in the sky beyond the far cloud: it floats there, is carried in
   // the hand once picked up, and ends up given to the rooster.
   // The trip with the angel and the boat (see the game loop).
-  const rideRef = useRef(startOfRide());
+  // The boat ashore at the beach and the fisher's question about it.
+  const shoreRef = useRef(startOfShore());
+  const [shore, setShore] = useState(shoreRef.current);
+  const fisherAnswer = useRef<'yes' | 'no' | null>(null); // Set by the buttons and the Y/J/N keys
+  const rideRef = useRef({ ...startOfRide(), ...DEV_START?.ride });
   const [ride, setRide] = useState(rideRef.current);
   const skyHeartRef = useRef<SkyHeartState>('floating');
   const [skyHeart, setSkyHeart] = useState<SkyHeartState>('floating');
@@ -562,6 +601,10 @@ function App() {
         keys.current.right = down;
       } else if (e.key === 'ArrowDown') {
         keys.current.down = down;
+      } else if (down && (e.key === 'y' || e.key === 'Y' || e.key === 'j' || e.key === 'J')) {
+        fisherAnswer.current = 'yes'; // Y, or J for "ja"
+      } else if (down && (e.key === 'n' || e.key === 'N')) {
+        fisherAnswer.current = 'no';
       } else {
         return;
       }
@@ -614,7 +657,7 @@ function App() {
       let room: Room = startRoom;
       let nextRoom = room;
       const dir = b.floating ? 0 : (k.right ? 1 : 0) - (k.left ? 1 : 0);
-      if (room === DARK || room === SEA_TOP) {
+      if (room === DARK || room === SEA_TOP || (room === BEACH && rideRef.current.phase === 'boat')) {
         // The trip with the angel: falling through the dark onto its back,
         // riding it up out of the sea, being dropped onto the boat, and then
         // sailing the boat. The player only steers once in the boat.
@@ -676,20 +719,33 @@ function App() {
             ride.boatV = (ride.boatV + dir * BOAT_ACCEL) * BOAT_DRAG;
             ride.boatX += ride.boatV;
             if (dir !== 0) b.facing = dir;
-            if (ride.boatX < 0 && dir < 0) {
-              // Sailing out of the left side lands the player back at the beach.
+            if (room === SEA_TOP && ride.boatX < 0 && dir < 0) {
+              // Sailing out of the left side of the open sea brings the boat
+              // in towards the beach, coming in from its right side.
               nextRoom = BEACH;
               room = nextRoom;
-              b.x = WORLD_WIDTH - PLAYER_SIZE;
-              b.y = GROUND_LEVEL;
-              b.onGround = true;
-            } else {
+              ride.boatX = WORLD_WIDTH - BOAT_SEAT_X - PLAYER_SIZE;
+            } else if (room === BEACH && ride.boatX > WORLD_WIDTH - BOAT_SEAT_X - PLAYER_SIZE && dir > 0) {
+              // ...and sailing back out to the right leads out to the open sea again.
+              nextRoom = SEA_TOP;
+              room = nextRoom;
+              ride.boatX = 0;
+            } else if (room === BEACH && ride.boatX <= SHORE_BOAT_X) {
+              // The boat has run onto the sand: it stays there, and the player
+              // is free to climb out. The fisher will want to know about it.
+              ride.boatX = SHORE_BOAT_X;
+              ride.boatV = 0;
+              ride.phase = 'ashore';
+              if (shoreRef.current.fisher === 'here' && shoreRef.current.answer === null) {
+                shoreRef.current.boat = 'landed';
+              }
+            } else if (room === SEA_TOP) {
               ride.boatX = Math.max(0, Math.min(WORLD_WIDTH - BOAT_WIDTH, ride.boatX));
-              if (ride.boatX === 0 || ride.boatX === WORLD_WIDTH - BOAT_WIDTH) ride.boatV = 0;
-              b.x = ride.boatX + BOAT_SEAT_X;
-              b.y = BOAT_DECK_Y + bob - PLAYER_SIZE;
-              b.onGround = true;
+              if (ride.boatX === WORLD_WIDTH - BOAT_WIDTH) ride.boatV = 0;
             }
+            b.x = Math.min(WORLD_WIDTH - PLAYER_SIZE, ride.boatX + BOAT_SEAT_X);
+            b.y = BOAT_DECK_Y + bob - PLAYER_SIZE;
+            b.onGround = true;
           }
         }
         if (ride.phase === 'falling') ride.angelY = ANGEL_BACK_Y - ANGEL_SEAT_Y;
@@ -831,6 +887,7 @@ function App() {
           b.flipDir = b.facing;
         }
         b.vy += GRAVITY;
+        if (room === CAT_FALL) b.vy = Math.min(b.vy, CAT_FALL_SPEED);
         nextY = b.y + b.vy;
         if (b.vy > 0) {
           const feetBefore = b.y + PLAYER_SIZE;
@@ -881,7 +938,17 @@ function App() {
           // out of the bottom, down to the place below (the lower cloud's
           // sky, or the trampoline place).
           if (nextY > WORLD_HEIGHT) {
-            nextRoom = room === SKY ? TRAMPOLINE_PLACE : SKY;
+            // (From the far cloud, the one with the heart, the way down goes
+            // past the big cat instead.)
+            nextRoom =
+              room === SKY ? TRAMPOLINE_PLACE : room === HIGH_SKY_WEST ? CAT_FALL : SKY;
+            nextY = -PLAYER_SIZE;
+          }
+        } else if (room === CAT_FALL) {
+          // The long fall past the cat: slow enough to see it, with nothing to
+          // land on, and at the bottom of it lies the meadow where it all began.
+          if (nextY > WORLD_HEIGHT) {
+            nextRoom = MEADOW;
             nextY = -PLAYER_SIZE;
           }
         } else if (!b.floating && nextY >= GROUND_LEVEL) {
@@ -1022,6 +1089,36 @@ function App() {
         if (livesRef.current <= 0) setGameOver(true);
         else graceFrames.current = HIT_GRACE_FRAMES;
       };
+
+      // The boat on the sand at the beach, and the fisher who wants it. Once
+      // he has been answered, what follows plays out frame by frame:
+      // yes – he climbs in and sails off towards the sun, growing smaller;
+      // no – he takes his hat off, his rod turns into a sword, and he swings
+      //      it, which costs a heart.
+      const shore = shoreRef.current;
+      if (
+        fisherAnswer.current &&
+        shore.boat === 'landed' &&
+        shore.answer === null &&
+        roomRef.current === BEACH
+      ) {
+        shore.answer = fisherAnswer.current;
+        shore.frames = 0;
+      }
+      fisherAnswer.current = null;
+      if (shore.answer !== null) {
+        shore.frames += 1;
+        if (shore.answer === 'yes') {
+          if (shore.frames === FISHER_BOARD_FRAMES) shore.boat = 'leaving';
+          if (shore.frames >= FISHER_BOARD_FRAMES + FISHER_SAIL_FRAMES) {
+            shore.boat = 'gone';
+            shore.fisher = 'gone';
+          }
+        } else if (shore.frames === SWORD_HIT_FRAME && roomRef.current === BEACH) {
+          hurt();
+        }
+      }
+      if (roomRef.current === BEACH) setShore({ ...shore });
 
       // Further out in the sea nothing is dangerous; only the clock runs, which
       // moves the animals there.
@@ -1252,6 +1349,9 @@ function App() {
     setSkyHeart('floating');
     rideRef.current = startOfRide();
     setRide(rideRef.current);
+    shoreRef.current = startOfShore();
+    setShore(shoreRef.current);
+    fisherAnswer.current = null;
     sharkRef.current = { x: 500, dir: -1, bite: 0, clock: 0 };
     setShark(sharkRef.current);
     seaCoinBackAt.current = SEA_COINS.map(() => 0);
@@ -1690,6 +1790,9 @@ function App() {
           </svg>
         )}
 
+        {/* The long fall from the far cloud: a huge, happy cat fills the background */}
+        {room === CAT_FALL && <BigCat />}
+
         {/* The dark place below the hole in the seabed: nothing but black (and the angel) */}
         {room === DARK && <div className="absolute inset-0 bg-black" role="img" aria-label="Dark place" />}
 
@@ -2066,21 +2169,125 @@ function App() {
         {/* The fisher at the beach, offering water, with the water bottle beside him */}
         {room === BEACH && (
           <>
-            <Fisher x={FISHER_X} />
+            {/* The boat: sailing in with the player, lying on the sand, or leaving with the fisher */}
+            {ride.phase === 'boat' && (
+              <Boat x={ride.boatX} y={BOAT_DECK_Y + 4 + Math.sin(ride.clock * 0.05) * 3} />
+            )}
+            {ride.phase !== 'boat' && shore.boat === 'landed' && <Boat x={SHORE_BOAT_X} y={BOAT_DECK_Y + 4} />}
+
+            {(() => {
+              if (shore.fisher === 'gone') return null;
+              if (shore.answer === 'yes') {
+                const f = shore.frames;
+                if (f < FISHER_BOARD_FRAMES) {
+                  // Climbing into the boat: a hop from the sand onto the deck
+                  const t = f / FISHER_BOARD_FRAMES;
+                  return (
+                    <Fisher
+                      x={FISHER_X + (SHORE_BOAT_X + 14 - FISHER_X) * t}
+                      y={238 - 36 * t - Math.sin(t * Math.PI) * 34}
+                      withLine={false}
+                    />
+                  );
+                }
+                // Sailing off towards the sun, smaller and smaller
+                const t = Math.min(1, (f - FISHER_BOARD_FRAMES) / FISHER_SAIL_FRAMES);
+                const size = 1 - 0.96 * t;
+                return (
+                  <div
+                    className="absolute"
+                    data-sailing-away
+                    style={{
+                      left: 0,
+                      top: 0,
+                      width: BOAT_WIDTH,
+                      transformOrigin: '0 0',
+                      transform: `translate(${
+                        SHORE_BOAT_X + (BEACH_SUN.x - (BOAT_WIDTH / 2) * size - SHORE_BOAT_X) * t
+                      }px, ${BOAT_DECK_Y + 4 + (BEACH_SUN.y - 6 - BOAT_DECK_Y) * t}px) scale(${size})`,
+                    }}
+                  >
+                    <Boat x={0} y={0} />
+                    <Fisher x={14} y={-102} withLine={false} />
+                  </div>
+                );
+              }
+              if (shore.answer === 'no') {
+                // Hat off; the rod turns into a sword; then the swing
+                const f = shore.frames;
+                const sword = Math.max(
+                  0,
+                  Math.min(1, (f - SWORD_START_FRAME) / (SWORD_READY_FRAME - SWORD_START_FRAME))
+                );
+                const swing =
+                  f < SWORD_HIT_FRAME - 12
+                    ? 0
+                    : f < SWORD_HIT_FRAME
+                    ? (f - (SWORD_HIT_FRAME - 12)) / 12
+                    : f < SWORD_HIT_FRAME + 40
+                    ? 1
+                    : Math.max(0, 1 - (f - SWORD_HIT_FRAME - 40) / 25);
+                return (
+                  <Fisher
+                    x={FISHER_X}
+                    // He turns towards the player to strike
+                    facing={player.x + PLAYER_SIZE / 2 < FISHER_X + 32 ? -1 : 1}
+                    hatOff
+                    sword={sword}
+                    swing={swing}
+                  />
+                );
+              }
+              return <Fisher x={FISHER_X} />;
+            })()}
+
+            {/* The fisher asks for the boat once it lies on the sand: answer with the buttons, or Y / N */}
+            {shore.boat === 'landed' && shore.answer === null && (
+              <div
+                className="absolute bg-white text-gray-800 text-sm font-semibold px-3 py-2 rounded-2xl shadow-md text-center z-10"
+                style={{ left: FISHER_X - 56, top: 150 }}
+                role="dialog"
+                aria-label="The fisher asks for the boat"
+              >
+                <p className="whitespace-nowrap mb-1.5">May I have the boat?</p>
+                <div className="flex justify-center gap-2">
+                  <button
+                    onClick={() => (fisherAnswer.current = 'yes')}
+                    className="bg-green-500 hover:bg-green-600 text-white px-3 py-0.5 rounded-full transition-colors"
+                  >
+                    Yes
+                  </button>
+                  <button
+                    onClick={() => (fisherAnswer.current = 'no')}
+                    className="bg-rose-500 hover:bg-rose-600 text-white px-3 py-0.5 rounded-full transition-colors"
+                  >
+                    No
+                  </button>
+                </div>
+                <span
+                  className="absolute bg-white"
+                  style={{ left: 84, bottom: -5, width: 12, height: 12, transform: 'rotate(45deg)' }}
+                />
+              </div>
+            )}
+
             {!rainbow && (
               <>
-                <div
-                  className="absolute bg-white text-gray-800 text-sm font-semibold px-3 py-1.5 rounded-2xl shadow-md whitespace-nowrap"
-                  style={{ left: FISHER_X - 70, top: 198 }}
-                  role="note"
-                >
-                  Would you like some water?
-                  {/* Tail of the speech bubble */}
-                  <span
-                    className="absolute bg-white"
-                    style={{ left: 96, bottom: -5, width: 12, height: 12, transform: 'rotate(45deg)' }}
-                  />
-                </div>
+                {/* His offer of water, while he has nothing else on his mind */}
+                {shore.fisher === 'here' && shore.answer === null && shore.boat !== 'landed' && (
+                  <div
+                    className="absolute bg-white text-gray-800 text-sm font-semibold px-3 py-1.5 rounded-2xl shadow-md whitespace-nowrap"
+                    style={{ left: FISHER_X - 70, top: 198 }}
+                    role="note"
+                  >
+                    Would you like some water?
+                    {/* Tail of the speech bubble */}
+                    <span
+                      className="absolute bg-white"
+                      style={{ left: 96, bottom: -5, width: 12, height: 12, transform: 'rotate(45deg)' }}
+                    />
+                  </div>
+                )}
                 <div
                   className="absolute"
                   style={{ transform: `translate(${WATER_BOTTLE.x}px, ${WATER_BOTTLE.y}px)` }}
