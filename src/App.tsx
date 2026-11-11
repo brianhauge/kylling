@@ -335,7 +335,8 @@ const SWORD_READY_FRAME = 145; // ...when it is a sword...
 const SWORD_HIT_FRAME = 162; // ...and when the swing lands
 const startOfShore = () => ({
   boat: 'none' as 'none' | 'landed' | 'leaving' | 'gone',
-  answer: null as 'yes' | 'no' | null,
+  // 'calmed' = he was refused and got angry, but was then given the heart
+  answer: null as 'yes' | 'no' | 'calmed' | null,
   frames: 0, // Since the answer
   fisher: 'here' as 'here' | 'gone',
 });
@@ -380,7 +381,8 @@ const SKY_CLOUDS: { [room: number]: { x: number; y: number; width: number } } = 
   [HIGH_SKY]: HIGH_CLOUD,
   [HIGH_SKY_WEST]: HIGH_WEST_CLOUD,
 };
-type SkyHeartState = 'floating' | 'carried' | 'given';
+// 'given' = to the rooster; 'toFisher' = to the angry fisher instead
+type SkyHeartState = 'floating' | 'carried' | 'given' | 'toFisher';
 const SKY_HEART: Position = { x: 290, y: 175 }; // In the air, a jump out from the cloud's end
 const HIGH_SKY_FLOAT_TOP = 150;
 const HIGH_SKY_ARRIVAL_X = 230; // Where the fast trampoline delivers the player
@@ -409,6 +411,9 @@ const DEV_STARTS: {
   sea: { room: UNDERWATER, body: { x: 400, y: 80 } },
   deepsea: { room: DEEP_SEA, body: { x: 100, y: 80 } },
 };
+// ...and "?heart=1" starts it already carrying the heart from the sky.
+const DEV_START_WITH_HEART =
+  import.meta.env.DEV && new URLSearchParams(window.location.search).has('heart');
 const DEV_START = import.meta.env.DEV
   ? DEV_STARTS[new URLSearchParams(window.location.search).get('start') ?? ''] ?? null
   : null;
@@ -551,8 +556,8 @@ function App() {
   const [trampolineEggs, setTrampolineEggs] = useState<boolean[]>(trampolineEggsTaken.current);
   const catLootTaken = useRef<boolean[]>(CAT_LOOT.map(() => false));
   const [catLoot, setCatLoot] = useState<boolean[]>(catLootTaken.current);
-  const skyHeartRef = useRef<SkyHeartState>('floating');
-  const [skyHeart, setSkyHeart] = useState<SkyHeartState>('floating');
+  const skyHeartRef = useRef<SkyHeartState>(DEV_START_WITH_HEART ? 'carried' : 'floating');
+  const [skyHeart, setSkyHeart] = useState<SkyHeartState>(skyHeartRef.current);
   const [shark, setShark] = useState(sharkRef.current);
   const seaCoinBackAt = useRef<number[]>(SEA_COINS.map(() => 0));
   const [seaCoinsThere, setSeaCoinsThere] = useState<boolean[]>(SEA_COINS.map(() => true));
@@ -1186,6 +1191,18 @@ function App() {
         shore.frames = 0;
       }
       fisherAnswer.current = null;
+      // Giving the heart to the angry fisher (instead of to the rooster) makes
+      // him good again: hat back on, the sword a fishing rod once more.
+      if (
+        shore.answer === 'no' &&
+        roomRef.current === BEACH &&
+        skyHeartRef.current === 'carried' &&
+        overlaps(hitbox, { x: FISHER_X + 4, y: 266, width: 56, height: 78 })
+      ) {
+        shore.answer = 'calmed';
+        skyHeartRef.current = 'toFisher';
+        setSkyHeart('toFisher');
+      }
       if (shore.answer !== null) {
         shore.frames += 1;
         if (shore.answer === 'yes') {
@@ -2346,6 +2363,20 @@ function App() {
                     sword={sword}
                     swing={swing}
                   />
+                );
+              }
+              if (shore.answer === 'calmed') {
+                // Given the heart: his old self again, with the heart floating above him
+                return (
+                  <>
+                    <Fisher x={FISHER_X} />
+                    <div className="absolute animate-bounce" style={{ left: FISHER_X + 14, top: 196 }}>
+                      <Heart
+                        aria-label="The fisher's heart"
+                        className="w-9 h-9 text-red-600 fill-red-500 drop-shadow-[0_0_6px_rgba(239,68,68,0.9)]"
+                      />
+                    </div>
+                  </>
                 );
               }
               return <Fisher x={FISHER_X} />;
