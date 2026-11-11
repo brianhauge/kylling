@@ -3,6 +3,14 @@ import { Egg, Heart } from 'lucide-react';
 import chickImage from './assets/chick.png';
 import { Coin, Shop, Wearables } from './Shop';
 import { Fisher, KnifeIcon, Shark, Signpost, WaterBottle } from './Props';
+import {
+  FAR_HILL_GRASS,
+  FAR_HILL_TUFTS,
+  GROUND_GRASS,
+  GROUND_TUFTS,
+  NEAR_HILL_GRASS,
+  NEAR_HILL_TUFTS,
+} from './grass';
 import { ItemId, SHOP_ITEMS, SaveData, loadSave, storeSave } from './shopData';
 import bunnyImage from './assets/bunny.png';
 
@@ -325,6 +333,9 @@ function App() {
   const doubleCoins = bonusLevel === level;
   // The meadow and the trampoline place share the hills and the grass.
   const hasMeadowLand = room === MEADOW || room === TRAMPOLINE_PLACE;
+  // The grass blades stick up above the shapes that the night tint covers,
+  // so they are darkened on their own.
+  const grassFilter = isNight ? 'brightness(0.55)' : 'brightness(1)';
   const legAngle = Math.sin(player.step) * LEG_SWING_DEGREES;
 
   // Scale the game to fill most of the window, keeping its 2:1 shape.
@@ -1029,16 +1040,27 @@ function App() {
           <path d="M260 150 L237 176 L252 172 L262 180 L272 171 L286 174 Z" fill="#ffffff" opacity="0.8" />
           <path d="M640 160 L619 182 L633 178 L642 186 L652 177 L664 180 Z" fill="#ffffff" opacity="0.8" />
 
-          {/* Far hills */}
+          {/* Far hills, with blades of grass along the top and tufts on the slope */}
+          <g style={{ filter: grassFilter, transition: 'filter 3s ease-in-out' }}>
+            <path d={FAR_HILL_GRASS[0]} fill="#4ade80" />
+            <path d={FAR_HILL_GRASS[1]} fill="#bbf7d0" />
+          </g>
           <path
             d="M0 330 L0 270 Q100 215 220 265 T440 260 T660 250 T800 265 L800 330 Z"
             fill="#86efac"
           />
-          {/* Near hills */}
+          <path d={FAR_HILL_TUFTS} fill="#4ade80" />
+          {/* Near hills, the same but with taller grass in three greens */}
+          <g style={{ filter: grassFilter, transition: 'filter 3s ease-in-out' }}>
+            <path d={NEAR_HILL_GRASS[0]} fill="#16a34a" />
+            <path d={NEAR_HILL_GRASS[1]} fill="#22c55e" />
+            <path d={NEAR_HILL_GRASS[2]} fill="#86efac" />
+          </g>
           <path
             d="M0 330 L0 300 Q80 265 180 295 T380 290 T580 295 T800 285 L800 330 Z"
             fill="#4ade80"
           />
+          <path d={NEAR_HILL_TUFTS} fill="#16a34a" />
           {/* Night tint over the mountains and hills */}
           <rect
             width="800"
@@ -1283,6 +1305,25 @@ function App() {
               style={{ opacity: isNight ? 0.5 : 0, transition: NIGHT_TRANSITION }}
             />
           </div>
+        )}
+
+        {/* Grass on the ground: blades standing up along its top edge and tufts on its face */}
+        {hasMeadowLand && (
+          <svg
+            className="absolute pointer-events-none"
+            style={{ left: 0, top: 320, filter: grassFilter, transition: 'filter 3s ease-in-out' }}
+            width="800"
+            height="80"
+            viewBox="0 0 800 80"
+            overflow="visible"
+            role="img"
+            aria-label="Grass"
+          >
+            <path d={GROUND_TUFTS} fill="#15803d" opacity="0.8" />
+            <path d={GROUND_GRASS[0]} fill="#15803d" />
+            <path d={GROUND_GRASS[1]} fill="#22c55e" />
+            <path d={GROUND_GRASS[2]} fill="#4ade80" />
+          </svg>
         )}
 
         {/* Signposts between the meadow and the trampoline place */}
