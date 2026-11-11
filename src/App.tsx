@@ -173,6 +173,13 @@ const HIGH_SKY_WEST = 6; // The next place along the big cloud, out of the left 
 const DEEP_SEA = 7; // More sea, out of the right side of the first one
 const CAT_FALL = 10; // The long fall from the far cloud, past the big cat, down to the meadow
 const CAT_FALL_SPEED = 3; // px per frame: slow enough to get a good look at the cat
+// The coins and eggs in the fall past the cat: seven rows of eight across the
+// whole picture, coins and eggs in turn, every other row shifted sideways.
+const CAT_LOOT: { x: number; y: number; coin: boolean }[] = Array.from({ length: 56 }, (_, i) => {
+  const row = Math.floor(i / 8);
+  const col = i % 8;
+  return { x: 30 + col * 94 + (row % 2) * 47, y: 18 + row * 52, coin: (row + col) % 2 === 0 };
+});
 const DARK = 8; // The dark place below the hole in the seabed
 const SEA_TOP = 9; // The open sea seen from above the water, with the boat
 type Room =
@@ -493,7 +500,7 @@ function App() {
       return { ...s, wearing };
     });
 
-  const [player, setPlayer] = useState({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0, flip: 0, heat: 0, blue: 0 });
+  const [player, setPlayer] = useState({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0, vy: 0, swimming: false, flip: 0, heat: 0, blue: 0 });
 
   // Which place the player is in, the walking cycle, and the level in which
   // the blue egg was last taken (its bonus lasts for the rest of that level).
@@ -532,6 +539,9 @@ function App() {
   const fisherAnswer = useRef<'yes' | 'no' | null>(null); // Set by the buttons and the Y/J/N keys
   const rideRef = useRef({ ...startOfRide(), ...DEV_START?.ride });
   const [ride, setRide] = useState(rideRef.current);
+  // Which of the coins and eggs in the fall past the cat have been grabbed this time down.
+  const catLootTaken = useRef<boolean[]>(CAT_LOOT.map(() => false));
+  const [catLoot, setCatLoot] = useState<boolean[]>(catLootTaken.current);
   const skyHeartRef = useRef<SkyHeartState>('floating');
   const [skyHeart, setSkyHeart] = useState<SkyHeartState>('floating');
   const [shark, setShark] = useState(sharkRef.current);
@@ -558,6 +568,12 @@ function App() {
   // The grass blades stick up above the shapes that the night tint covers,
   // so they are darkened on their own.
   const grassFilter = isNight ? 'brightness(0.55)' : 'brightness(1)';
+  // Swimming poses under water: sideways the body swings out behind the head
+  // and the wings flap; upwards the wings flap; downwards the legs are gone.
+  const swimSideways = player.swimming && Math.abs(player.vx) > 0.6;
+  const swimUp = player.swimming && player.vy < -0.6;
+  const swimDown = player.swimming && player.vy > 0.6;
+  const wingFlap = swimSideways || swimUp ? Math.sin(player.step * 1.7) * 38 : 0;
   // The head's colour: blue when out of breath under water, otherwise red from the sun.
   const headTint =
     player.blue > 0
@@ -980,6 +996,11 @@ function App() {
         roomRef.current = nextRoom;
         setRoom(nextRoom);
         trail.current = []; // The follower chick comes along instead of walking the old route
+        // Every fall past the cat starts with all its coins and eggs in place.
+        if (nextRoom === CAT_FALL) {
+          catLootTaken.current = CAT_LOOT.map(() => false);
+          setCatLoot(catLootTaken.current);
+        }
       }
 
       // Walking: the legs swing with the distance covered, and rest otherwise.
@@ -1038,6 +1059,8 @@ function App() {
         facing: dir !== 0 ? dir : p.facing,
         crying,
         step: stepRef.current,
+        vy: b.vy,
+        swimming: inSea,
         flip: b.flip * b.flipDir,
         heat: heatRef.current,
         blue: blueRef.current,
@@ -1059,6 +1082,31 @@ function App() {
       ) {
         bonusLevelRef.current = levelNow;
         setBonusLevel(levelNow);
+      }
+
+      // Falling past the cat there are a great many coins and eggs to grab on
+      // the way down: a coin is money, an egg is a point.
+      if (roomRef.current === CAT_FALL) {
+        let kroner = 0;
+        let points = 0;
+        CAT_LOOT.forEach((item, i) => {
+          if (!catLootTaken.current[i] && overlaps(hitbox, item)) {
+            catLootTaken.current[i] = true;
+            if (item.coin) {
+              kroner += COIN_VALUE * (bonusLevelRef.current === levelNow ? BLUE_EGG_MULTIPLIER : 1);
+            } else {
+              points += 1;
+            }
+          }
+        });
+        if (kroner > 0 || points > 0) {
+          setCatLoot([...catLootTaken.current]);
+          if (kroner > 0) setSave(sv => ({ ...sv, coins: sv.coins + kroner }));
+          if (points > 0) {
+            scoreRef.current += points;
+            setScore(scoreRef.current);
+          }
+        }
       }
 
       // The heart floating in the air beyond the end of the far cloud: jumping
@@ -1358,7 +1406,7 @@ function App() {
     setSeaCoinsThere(SEA_COINS.map(() => true));
     bunnyAliveRef.current = true;
     setBunnyAlive(true);
-    setPlayer({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0, flip: 0, heat: 0, blue: 0 });
+    setPlayer({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0, vy: 0, swimming: false, flip: 0, heat: 0, blue: 0 });
     setLives(MAX_LIVES);
     setPlatformYs(platformYsRef.current);
     setEggs(eggsRef.current);
@@ -1792,6 +1840,21 @@ function App() {
 
         {/* The long fall from the far cloud: a huge, happy cat fills the background */}
         {room === CAT_FALL && <BigCat />}
+        {/* ...with a great many coins and eggs to grab on the way down */}
+        {room === CAT_FALL &&
+          CAT_LOOT.map(
+            (item, i) =>
+              !catLoot[i] && (
+                <div
+                  key={i}
+                  className="absolute"
+                  data-cat-loot={item.coin ? 'coin' : 'egg'}
+                  style={{ transform: `translate(${item.x}px, ${item.y}px)` }}
+                >
+                  {item.coin ? <Coin /> : <Egg className="w-8 h-8 text-white fill-white/40" />}
+                </div>
+              )
+          )}
 
         {/* The dark place below the hole in the seabed: nothing but black (and the angel) */}
         {room === DARK && <div className="absolute inset-0 bg-black" role="img" aria-label="Dark place" />}
@@ -2331,15 +2394,28 @@ function App() {
           {isHen ? (
             <svg
               className="absolute"
-              style={{ left: -4, top: -6, transform: `scaleX(${player.facing})` }}
+              // Swimming sideways, the hen leans forward into it.
+              style={{
+                left: -4,
+                top: -6,
+                transform: `scaleX(${player.facing}) rotate(${swimSideways ? 24 : 0}deg)`,
+                transition: 'transform 0.2s ease-out',
+              }}
               width="48"
               height="48"
               viewBox="0 0 48 48"
+              overflow="visible"
               role="img"
               aria-label="Hen"
             >
-              {/* Legs and feet */}
-              <g stroke="#f97316" strokeWidth="2.5" strokeLinecap="round" fill="none">
+              {/* Legs and feet (gone while swimming downwards) */}
+              <g
+                stroke="#f97316"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                fill="none"
+                opacity={swimDown ? 0 : 1}
+              >
                 {/* Each leg swings around its hip, the two in opposite directions */}
                 <path d="M19 38 V46 M15 46 H23" transform={`rotate(${legAngle} 19 38)`} />
                 <path d="M27 38 V46 M23 46 H31" transform={`rotate(${-legAngle} 27 38)`} />
@@ -2357,13 +2433,14 @@ function App() {
                 strokeWidth="1.2"
                 strokeLinejoin="round"
               />
-              {/* Wing */}
+              {/* Wing (flapping while swimming sideways or upwards) */}
               <path
                 d="M13 27 Q21 21 30 27 Q25 36 13 31 Z"
                 fill="#fde68a"
                 stroke="#a16207"
                 strokeWidth="1.2"
                 strokeLinejoin="round"
+                transform={`rotate(${wingFlap * 0.8} 28 27)`}
               />
               {/* Head going red in the sun at the beach, or blue when out of breath under water */}
               <circle
@@ -2385,8 +2462,22 @@ function App() {
               {/* Beak */}
               <path d="M42 12 L48 15.5 L42 18 Z" fill="#f97316" />
               {/* Eye */}
-              {/* Eye: glows red while holding the knife */}
-              {hasKnife ? (
+              {/* Eye: a money eye while falling past the cat; glows red while holding the knife */}
+              {room === CAT_FALL ? (
+                <g transform="translate(37.5 13)" aria-label="Money eyes">
+                  <circle r="3.2" fill="#fde047" stroke="#a16207" strokeWidth="0.8" />
+                  <text
+                    y="2"
+                    textAnchor="middle"
+                    fontSize="5.6"
+                    fontWeight="bold"
+                    fill="#166534"
+                    transform={`scale(${player.facing} 1)`}
+                  >
+                    $
+                  </text>
+                </g>
+              ) : hasKnife ? (
                 <circle cx="37.5" cy="13" r="2.4" fill="#ef4444" stroke="#7f1d1d" strokeWidth="0.6" />
               ) : (
                 <circle cx="37.5" cy="13" r="1.7" fill="#111827" />
@@ -2396,42 +2487,87 @@ function App() {
             // Starter chick: drawn a little taller than the hitbox, feet on the ground.
             // The picture itself looks to the left, so everything is mirrored when walking right.
             <div className="absolute inset-0" style={{ transform: `scaleX(${-player.facing})` }}>
-              {/* Legs: drawn here so they can swing; the picture's own feet are cut off below */}
-              <svg
-                className="absolute pointer-events-none"
-                style={{ left: 0, top: 0 }}
-                width="40"
-                height="40"
-                viewBox="0 0 40 40"
-                overflow="visible"
-                aria-hidden="true"
+              {/* The body, below the neck. It is the lower part of the picture,
+                  so that it can turn on its own: swimming sideways, it swings
+                  out behind the head, which stays as it is. */}
+              <div
+                className="absolute inset-0"
+                data-chick-body
+                style={{
+                  transformOrigin: '20px 18px',
+                  transform: `rotate(${swimSideways ? -52 : 0}deg)`,
+                  transition: 'transform 0.2s ease-out',
+                }}
               >
-                {[
-                  { x: 15.5, angle: legAngle },
-                  { x: 26.5, angle: -legAngle },
-                ].map(leg => (
-                  <g
-                    key={leg.x}
-                    data-leg
-                    transform={`rotate(${leg.angle} ${leg.x} 33)`}
-                    stroke="#f59e0b"
-                    strokeLinecap="round"
-                    fill="none"
+                {/* Legs: drawn here so they can swing; the picture's own feet are cut off below.
+                    Swimming downwards, the legs are gone. */}
+                {!swimDown && (
+                  <svg
+                    className="absolute pointer-events-none"
+                    style={{ left: 0, top: 0 }}
+                    width="40"
+                    height="40"
+                    viewBox="0 0 40 40"
+                    overflow="visible"
+                    aria-hidden="true"
                   >
-                    <path d={`M${leg.x} 33 V42.5`} strokeWidth="3" />
-                    <path
-                      d={`M${leg.x} 42.5 l-5.5 1.2 M${leg.x} 42.5 l-4.5 -1.2 M${leg.x} 42.5 l2.5 1`}
-                      strokeWidth="2"
-                    />
-                  </g>
-                ))}
-              </svg>
+                    {[
+                      { x: 15.5, angle: legAngle },
+                      { x: 26.5, angle: -legAngle },
+                    ].map(leg => (
+                      <g
+                        key={leg.x}
+                        data-leg
+                        transform={`rotate(${leg.angle} ${leg.x} 33)`}
+                        stroke="#f59e0b"
+                        strokeLinecap="round"
+                        fill="none"
+                      >
+                        <path d={`M${leg.x} 33 V42.5`} strokeWidth="3" />
+                        <path
+                          d={`M${leg.x} 42.5 l-5.5 1.2 M${leg.x} 42.5 l-4.5 -1.2 M${leg.x} 42.5 l2.5 1`}
+                          strokeWidth="2"
+                        />
+                      </g>
+                    ))}
+                  </svg>
+                )}
+                <img
+                  src={chickImage}
+                  alt=""
+                  draggable={false}
+                  className="absolute max-w-none select-none"
+                  style={{ left: 2, top: -10, width: 36, height: 54, clipPath: 'inset(48% 0 15% 0)' }}
+                />
+                {/* Wings that flap while swimming sideways or upwards */}
+                {player.swimming && (
+                  <svg
+                    className="absolute pointer-events-none"
+                    style={{ left: 0, top: 0 }}
+                    width="40"
+                    height="40"
+                    viewBox="0 0 40 40"
+                    overflow="visible"
+                    aria-hidden="true"
+                  >
+                    <g fill="#facc15" stroke="#b45309" strokeWidth="1.2" strokeLinejoin="round">
+                      <path
+                        data-wing
+                        d="M7 22 Q-6 22 -9 34 Q2 34 9 28 Z"
+                        transform={`rotate(${wingFlap} 7 23)`}
+                      />
+                      <path d="M33 22 Q46 22 49 34 Q38 34 31 28 Z" transform={`rotate(${-wingFlap} 33 23)`} />
+                    </g>
+                  </svg>
+                )}
+              </div>
+              {/* The head: the upper part of the picture, always upright */}
               <img
                 src={chickImage}
                 alt="Chick"
                 draggable={false}
                 className="absolute max-w-none select-none"
-                style={{ left: 2, top: -10, width: 36, height: 54, clipPath: 'inset(0 0 15% 0)' }}
+                style={{ left: 2, top: -10, width: 36, height: 54, clipPath: 'inset(0 0 48% 0)' }}
               />
               {/* Head going red in the sun at the beach: a red tint in the shape
                   of the picture, fading out below the head */}
@@ -2447,16 +2583,49 @@ function App() {
                   opacity: headTint.amount * (headTint.blue ? 0.95 : SUNBURN_OPACITY),
                   // Blue replaces the yellow outright; red is laid over it
                   mixBlendMode: headTint.blue ? 'color' : 'multiply',
-                  maskImage: `url(${chickImage}), linear-gradient(#000 50%, transparent 60%)`,
+                  maskImage: `url(${chickImage}), linear-gradient(#000 46%, transparent 53%)`,
                   maskSize: '100% 100%',
                   maskRepeat: 'no-repeat',
                   maskComposite: 'intersect',
-                  WebkitMaskImage: `url(${chickImage}), linear-gradient(#000 50%, transparent 60%)`,
+                  WebkitMaskImage: `url(${chickImage}), linear-gradient(#000 46%, transparent 53%)`,
                   WebkitMaskSize: '100% 100%',
                   WebkitMaskRepeat: 'no-repeat',
                   WebkitMaskComposite: 'source-in',
                 }}
               />
+              {/* Money eyes: only while falling past the cat, with all that money about */}
+              {room === CAT_FALL && (
+                <svg
+                  className="absolute pointer-events-none"
+                  style={{ left: 0, top: 0 }}
+                  width="40"
+                  height="40"
+                  viewBox="0 0 40 40"
+                  overflow="visible"
+                  role="img"
+                  aria-label="Money eyes"
+                >
+                  {[
+                    { x: 9.8, y: 12.2 },
+                    { x: 25.4, y: 8.4 },
+                  ].map(eye => (
+                    <g key={eye.x} transform={`translate(${eye.x} ${eye.y})`}>
+                      <circle r="3.8" fill="#fde047" stroke="#a16207" strokeWidth="0.9" />
+                      {/* Turned back the right way round when the figure is mirrored */}
+                      <text
+                        y="2.4"
+                        textAnchor="middle"
+                        fontSize="6.6"
+                        fontWeight="bold"
+                        fill="#166534"
+                        transform={`scale(${-player.facing} 1)`}
+                      >
+                        $
+                      </text>
+                    </g>
+                  ))}
+                </svg>
+              )}
               {/* Eyes: glow red while holding the knife */}
               {hasKnife && (
                 <svg
@@ -2622,15 +2791,20 @@ function App() {
           </div>
         ))}
 
-        {/* Bunny (gone for the rest of the game once it has been beaten with the knife) */}
-        {room === MEADOW && bunnyAlive && (
+        {/* Bunny. Once it has been beaten with the knife it does not vanish: it
+            lies where it was, squashed very flat, for the rest of the game. */}
+        {room === MEADOW && (
         <div
           className="absolute"
+          data-bunny-flat={!bunnyAlive}
           style={{
             // The bunny picture faces left, so mirror it when walking right.
             width: bunny.width,
             height: bunny.height,
-            transform: `translate(${bunny.x}px, ${bunny.y}px) scaleX(${-bunnyFacing})`,
+            transformOrigin: '50% 44px', // Its feet, so that it is flattened onto the ground
+            transform: `translate(${bunny.x}px, ${bunny.y}px) scaleX(${-bunnyFacing})${
+              bunnyAlive ? '' : ' scale(1.25, 0.12)'
+            }`,
           }}
         >
           {/* Feet: drawn here so they can step; the picture's own feet are cut off below.
