@@ -2971,7 +2971,7 @@ function App() {
 
         {/* Game Over Screen */}
         {gameOver && (
-          <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-20">
             {shopOpen ? (
               <div className="text-center">
                 <Shop

@@ -1,4 +1,16 @@
-export type ItemId = 'bow' | 'earring' | 'hat' | 'follower';
+export type ItemId =
+  | 'bow'
+  | 'earring'
+  | 'hat'
+  | 'follower'
+  | 'necklace'
+  | 'dress'
+  | 'bracelet'
+  | 'sunglasses'
+  | 'cape'
+  | 'tshirt'
+  | 'gloves'
+  | 'globe';
 
 export interface ShopItem {
   id: ItemId;
@@ -11,6 +23,14 @@ export const SHOP_ITEMS: ShopItem[] = [
   { id: 'earring', name: 'Earring', price: 15 },
   { id: 'hat', name: 'Hat', price: 20 },
   { id: 'follower', name: 'Chick that follows you', price: 50 },
+  { id: 'bracelet', name: 'Bracelet', price: 10 },
+  { id: 'necklace', name: 'Necklace', price: 12 },
+  { id: 'tshirt', name: 'White T-shirt', price: 14 },
+  { id: 'sunglasses', name: 'Sunglasses', price: 16 },
+  { id: 'gloves', name: 'Boxing gloves', price: 18 },
+  { id: 'cape', name: 'Cape', price: 20 },
+  { id: 'dress', name: 'Dress', price: 22 },
+  { id: 'globe', name: 'Globe for a head', price: 25 },
 ];
 
 // What is kept between games (and between visits): the money and the wardrobe.
