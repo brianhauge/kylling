@@ -474,6 +474,41 @@ export function WaterBottle() {
   );
 }
 
+/** The magic bottle in the second sea, 30×34: purple, pink and blue, with a glow and sparkles. */
+export function MagicBottle() {
+  return (
+    <svg width="30" height="34" viewBox="0 0 30 34" overflow="visible" role="img" aria-label="Magic bottle">
+      <defs>
+        <linearGradient id="magicBottle" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#a855f7" />
+          <stop offset="50%" stopColor="#f472b6" />
+          <stop offset="100%" stopColor="#3b82f6" />
+        </linearGradient>
+        <radialGradient id="magicGlow">
+          <stop offset="0%" stopColor="#f0abfc" stopOpacity="0.8" />
+          <stop offset="100%" stopColor="#f0abfc" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <circle cx="15" cy="19" r="24" fill="url(#magicGlow)" />
+      {/* Cork, neck and round body */}
+      <rect x="12" y="1" width="6" height="5" rx="1.5" fill="#92400e" stroke="#451a03" strokeWidth="0.8" />
+      <rect x="12.5" y="5.5" width="5" height="6" fill="#e9d5ff" stroke="#6b21a8" strokeWidth="0.9" />
+      <path
+        d="M12.5 11 Q4 14 4 22 Q4 32 15 32 Q26 32 26 22 Q26 14 17.5 11 Z"
+        fill="url(#magicBottle)"
+        stroke="#6b21a8"
+        strokeWidth="1.2"
+      />
+      {/* Shine and sparkles */}
+      <path d="M9 18 Q8 24 11 28" fill="none" stroke="#ffffff" strokeWidth="1.6" strokeLinecap="round" opacity="0.8" />
+      <g fill="#ffffff">
+        <path d="M27 6 l1.2 3 l3 1.2 l-3 1.2 l-1.2 3 l-1.2 -3 l-3 -1.2 l3 -1.2 Z" />
+        <path d="M2 10 l0.8 2 l2 0.8 l-2 0.8 l-0.8 2 l-0.8 -2 l-2 -0.8 l2 -0.8 Z" />
+      </g>
+    </svg>
+  );
+}
+
 /** A small wooden signpost with an arrow, standing on the ground at `x`. */
 export function Signpost({ x, label }: { x: number; label: string }) {
   return (

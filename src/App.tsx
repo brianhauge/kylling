@@ -10,6 +10,7 @@ import {
   Herring,
   Turtle,
   KnifeIcon,
+  MagicBottle,
   Rooster,
   Shark,
   Signpost,
@@ -294,6 +295,9 @@ const ROOM_ROWS: Room[][] = [
 const BEACH_WATER_X = WORLD_WIDTH / 2; // Sand to the left of this, water to the right
 const WADING_SPEED = 2.5; // Top speed in the water (half the normal speed)
 const RAINBOW_MS = 20_000; // Rainbow-coloured, and safe from the bunny, for 20 seconds
+const BREATH_FRAMES = 300; // Under water the head is fully blue after 5 seconds...
+const BREATH_BACK_FRAMES = 90; // ...and normal again 1.5 seconds after coming up
+const MAGIC_BOTTLE: Position = { x: 236, y: 250 }; // In the second sea, above the corals
 const SUNBURN_OPACITY = 0.75; // How strong the red tint is when fully red
 const SUNBURN_FRAMES = 300; // The head takes 5 seconds to turn fully red at the beach
 const FISHER_X = 290; // The fisher stands on the sand at the water's edge
@@ -428,7 +432,7 @@ function App() {
       return { ...s, wearing };
     });
 
-  const [player, setPlayer] = useState({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0, flip: 0, heat: 0 });
+  const [player, setPlayer] = useState({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0, flip: 0, heat: 0, blue: 0 });
 
   // Which place the player is in, the walking cycle, and the level in which
   // the blue egg was last taken (its bonus lasts for the rest of that level).
@@ -450,6 +454,10 @@ function App() {
   // The beach: the head slowly turns red in the sun, until the water bottle
   // by the fisher is picked up, which turns the figure rainbow-coloured.
   const heatRef = useRef(0); // 0 = normal, 1 = fully red
+  // Out of breath under water: 0 = normal, 1 = fully blue. Cured by the magic bottle.
+  const blueRef = useRef(0);
+  const curedRef = useRef(false);
+  const [cured, setCured] = useState(false);
   // Under the sea: the shark, and for each coin the clock time at which it is
   // back (0 = it is lying there now).
   const sharkRef = useRef({ x: 500, dir: -1, bite: 0, clock: 0 });
@@ -482,6 +490,11 @@ function App() {
   // The grass blades stick up above the shapes that the night tint covers,
   // so they are darkened on their own.
   const grassFilter = isNight ? 'brightness(0.55)' : 'brightness(1)';
+  // The head's colour: blue when out of breath under water, otherwise red from the sun.
+  const headTint =
+    player.blue > 0
+      ? { color: '#2563eb', amount: player.blue, blue: true }
+      : { color: '#ef4444', amount: player.heat, blue: false };
   // The trampoline place has its own backdrop; everywhere else uses the meadow's.
   const scenery = room === TRAMPOLINE_PLACE ? TRAMPOLINE_SCENERY : MEADOW_SCENERY;
   const legAngle = Math.sin(player.step) * LEG_SWING_DEGREES;
@@ -816,6 +829,24 @@ function App() {
         ? 0
         : Math.max(0, Math.min(1, heatRef.current + (heating ? 1 : -1) / SUNBURN_FRAMES));
 
+      // Under water the player cannot hold its breath for long: the head
+      // turns blue (it costs no hearts) and clears again above water. The
+      // magic bottle in the second sea is the cure, for the rest of the game.
+      if (
+        roomRef.current === DEEP_SEA &&
+        !curedRef.current &&
+        overlaps({ x: b.x, y: b.y, width: PLAYER_SIZE, height: PLAYER_SIZE }, MAGIC_BOTTLE)
+      ) {
+        curedRef.current = true;
+        setCured(true);
+      }
+      blueRef.current = curedRef.current
+        ? 0
+        : Math.max(
+            0,
+            Math.min(1, blueRef.current + (inSea ? 1 / BREATH_FRAMES : -1 / BREATH_BACK_FRAMES))
+          );
+
       if (graceFrames.current > 0) graceFrames.current -= 1;
       const crying = graceFrames.current > 0;
       setPlayer(p => ({
@@ -827,6 +858,7 @@ function App() {
         step: stepRef.current,
         flip: b.flip * b.flipDir,
         heat: heatRef.current,
+        blue: blueRef.current,
       }));
 
       const hitbox: GameObject = { x: b.x, y: b.y, width: PLAYER_SIZE, height: PLAYER_SIZE };
@@ -1095,6 +1127,9 @@ function App() {
     hasKnifeRef.current = false;
     setHasKnife(false);
     heatRef.current = 0;
+    blueRef.current = 0;
+    curedRef.current = false;
+    setCured(false);
     rainbowEndsAt.current = 0;
     setRainbowSeconds(0);
     sharkBiteFrames.current = 0;
@@ -1106,7 +1141,7 @@ function App() {
     setSeaCoinsThere(SEA_COINS.map(() => true));
     bunnyAliveRef.current = true;
     setBunnyAlive(true);
-    setPlayer({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0, flip: 0, heat: 0 });
+    setPlayer({ x: 50, y: GROUND_LEVEL, vx: 0, facing: 1, crying: false, step: 0, flip: 0, heat: 0, blue: 0 });
     setLives(MAX_LIVES);
     setPlatformYs(platformYsRef.current);
     setEggs(eggsRef.current);
@@ -1796,15 +1831,46 @@ function App() {
               const span = WORLD_WIDTH - 72;
               const travelled = (900 + shark.clock * 0.6) % (span * 2);
               const goingRight = travelled < span;
+              const turtleX = goingRight ? travelled : span * 2 - travelled;
+              const turtleY = 140 + Math.sin(shark.clock * 0.02) * 14;
               return (
-                <Turtle
-                  x={goingRight ? travelled : span * 2 - travelled}
-                  y={140 + Math.sin(shark.clock * 0.02) * 14}
-                  dir={goingRight ? 1 : -1}
-                  flap={Math.sin(shark.clock * 0.08) * 22}
-                />
+                <>
+                  <Turtle
+                    x={turtleX}
+                    y={turtleY}
+                    dir={goingRight ? 1 : -1}
+                    flap={Math.sin(shark.clock * 0.08) * 22}
+                  />
+                  {/* Until the cure has been taken, the turtle offers it */}
+                  {!cured && (
+                    <div
+                      className="absolute bg-white text-gray-800 text-xs font-semibold px-3 py-1.5 rounded-2xl shadow-md text-center leading-tight"
+                      style={{
+                        width: 190,
+                        left: Math.max(4, Math.min(WORLD_WIDTH - 194, turtleX - 60)),
+                        top: turtleY - 48,
+                      }}
+                      role="note"
+                    >
+                      Would you like a cure for not being able to breathe under water?
+                    </div>
+                  )}
+                </>
               );
             })()}
+            {/* The cure: a magic bottle in purple, pink and blue, bobbing in the water */}
+            {!cured && (
+              <div
+                className="absolute"
+                style={{
+                  transform: `translate(${MAGIC_BOTTLE.x}px, ${
+                    MAGIC_BOTTLE.y + Math.sin(shark.clock * 0.06) * 4
+                  }px)`,
+                }}
+              >
+                <MagicBottle />
+              </div>
+            )}
             {/* One frog sits on the sand; the other swims up and down, kicking */}
             <Frog x={78} y={344} dir={1} kick={0} />
             <Frog
@@ -1924,14 +1990,14 @@ function App() {
                 strokeWidth="1.2"
                 strokeLinejoin="round"
               />
-              {/* Head going red in the sun at the beach */}
+              {/* Head going red in the sun at the beach, or blue when out of breath under water */}
               <circle
                 data-sunburn
                 cx="36"
                 cy="13.5"
                 r="6.6"
-                fill="#ef4444"
-                opacity={player.heat * SUNBURN_OPACITY}
+                fill={headTint.color}
+                opacity={headTint.amount * SUNBURN_OPACITY}
               />
               {/* Comb */}
               <g fill="#ef4444">
@@ -2002,9 +2068,10 @@ function App() {
                   top: -10,
                   width: 36,
                   height: 54,
-                  backgroundColor: '#ef4444',
-                  opacity: player.heat * SUNBURN_OPACITY,
-                  mixBlendMode: 'multiply',
+                  backgroundColor: headTint.color,
+                  opacity: headTint.amount * (headTint.blue ? 0.95 : SUNBURN_OPACITY),
+                  // Blue replaces the yellow outright; red is laid over it
+                  mixBlendMode: headTint.blue ? 'color' : 'multiply',
                   maskImage: `url(${chickImage}), linear-gradient(#000 50%, transparent 60%)`,
                   maskSize: '100% 100%',
                   maskRepeat: 'no-repeat',
