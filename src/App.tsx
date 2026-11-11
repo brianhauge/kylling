@@ -4,7 +4,11 @@ import chickImage from './assets/chick.png';
 import { Coin, Shop, Wearables } from './Shop';
 import {
   CloudPlatform,
+  Coral,
   Fisher,
+  Frog,
+  Herring,
+  Turtle,
   KnifeIcon,
   Rooster,
   Shark,
@@ -162,7 +166,9 @@ const BEACH = 3; // Further on past the trampoline place
 const UNDERWATER = 4; // Down in the sea off the beach
 const HIGH_SKY = 5; // Higher up still, reached from the trampoline on the sky cloud
 const HIGH_SKY_WEST = 6; // The next place along the big cloud, out of the left side
+const DEEP_SEA = 7; // More sea, out of the right side of the first one
 type Room =
+  | typeof DEEP_SEA
   | typeof HIGH_SKY
   | typeof HIGH_SKY_WEST
   | typeof MEADOW
@@ -259,6 +265,17 @@ const SEA_COINS: Position[] = [
 ];
 // The little fish: where each starts along its to-and-fro route, its depth,
 // its speed (px per frame) and its colours.
+// In the second sea the sand covers the left half of the bottom; to the right
+// of this x a hole goes on down.
+const SEA_HOLE_X = WORLD_WIDTH / 2;
+const SEA_HOLE_BOTTOM_Y = WORLD_HEIGHT - PLAYER_SIZE; // As far down as the picture goes
+// The other fish out there: like SEA_FISH, in other colours.
+const DEEP_SEA_FISH = [
+  { start: 300, y: 95, speed: 0.9, color: '#38bdf8', stripe: '#fef08a' },
+  { start: 1100, y: 165, speed: 1.3, color: '#fde047', stripe: '#f97316' },
+  { start: 620, y: 235, speed: 0.75, color: '#fb7185', stripe: '#ffffff' },
+  { start: 40, y: 300, speed: 1.15, color: '#c084fc', stripe: '#22d3ee' },
+];
 const SEA_FISH = [
   { start: 60, y: 70, speed: 1.1, color: '#fb923c', stripe: '#ffffff' },
   { start: 900, y: 120, speed: 0.8, color: '#facc15', stripe: '#1d4ed8' },
@@ -301,6 +318,7 @@ const SKY_CLOUDS: { [room: number]: { x: number; y: number; width: number } } = 
   [HIGH_SKY]: HIGH_CLOUD,
   [HIGH_SKY_WEST]: HIGH_WEST_CLOUD,
 };
+type SkyHeartState = 'floating' | 'carried' | 'given';
 const SKY_HEART: Position = { x: 290, y: 175 }; // In the air, a jump out from the cloud's end
 const HIGH_SKY_FLOAT_TOP = 150;
 const HIGH_SKY_ARRIVAL_X = 230; // Where the fast trampoline delivers the player
@@ -436,9 +454,10 @@ function App() {
   // back (0 = it is lying there now).
   const sharkRef = useRef({ x: 500, dir: -1, bite: 0, clock: 0 });
   const sharkBiteFrames = useRef(0);
-  // The heart in the sky beyond the far cloud: one per game.
-  const skyHeartThere = useRef(true);
-  const [skyHeart, setSkyHeart] = useState(true);
+  // The heart in the sky beyond the far cloud: it floats there, is carried in
+  // the hand once picked up, and ends up given to the rooster.
+  const skyHeartRef = useRef<SkyHeartState>('floating');
+  const [skyHeart, setSkyHeart] = useState<SkyHeartState>('floating');
   const [shark, setShark] = useState(sharkRef.current);
   const seaCoinBackAt = useRef<number[]>(SEA_COINS.map(() => 0));
   const [seaCoinsThere, setSeaCoinsThere] = useState<boolean[]>(SEA_COINS.map(() => true));
@@ -553,18 +572,54 @@ function App() {
       let room: Room = startRoom;
       let nextRoom = room;
       const dir = b.floating ? 0 : (k.right ? 1 : 0) - (k.left ? 1 : 0);
-      if (room === UNDERWATER) {
+      if (room === UNDERWATER || room === DEEP_SEA) {
         // Swimming: the arrow keys push in all four directions, the water
         // slows the player down again, and there is no gravity.
         const vertical = (k.down ? 1 : 0) - (k.jump ? 1 : 0);
         b.vx = (b.vx + dir * SWIM_ACCEL) * SWIM_DRAG;
         b.vy = (b.vy + vertical * SWIM_ACCEL) * SWIM_DRAG;
         if (dir !== 0) b.facing = dir;
-        b.x = Math.max(0, Math.min(WORLD_WIDTH - PLAYER_SIZE, b.x + b.vx));
+        const yBeforeSwim = b.y;
+        b.x += b.vx;
         b.y += b.vy;
         b.onGround = false;
         b.platform = null;
         b.flip = 0;
+        const maxSwimX = WORLD_WIDTH - PLAYER_SIZE;
+        // Swimming all the way out of the right side of the first sea leads
+        // to more sea, and back out of that one's left side leads back.
+        if (room === UNDERWATER && b.x > maxSwimX && b.vx > 0) {
+          nextRoom = DEEP_SEA;
+          room = nextRoom;
+          b.x = 0;
+        } else if (room === DEEP_SEA && b.x < 0 && b.vx < 0) {
+          nextRoom = UNDERWATER;
+          room = nextRoom;
+          b.x = maxSwimX;
+        }
+        b.x = Math.max(0, Math.min(maxSwimX, b.x));
+        if (room === DEEP_SEA) {
+          // Here the sand only covers the left half; to the right of it a
+          // hole goes further down. The sand is solid from the side as well.
+          if (b.x < SEA_HOLE_X) {
+            if (yBeforeSwim <= SEABED_Y + 0.01) {
+              // Coming down onto the sand from above: it is the floor.
+              if (b.y > SEABED_Y) {
+                b.y = SEABED_Y;
+                b.vy = 0;
+              }
+            } else {
+              b.x = SEA_HOLE_X; // Down in the hole: the wall of sand stops the player
+            }
+          }
+          if (b.y > SEA_HOLE_BOTTOM_Y) {
+            b.y = SEA_HOLE_BOTTOM_Y;
+            b.vy = 0;
+          }
+        } else if (b.y > SEABED_Y) {
+          b.y = SEABED_Y;
+          b.vy = 0;
+        }
         if (b.y < -PLAYER_SIZE / 2 && b.vy < 0) {
           // Swimming up through the surface leads back to the sea at the beach.
           nextRoom = BEACH;
@@ -572,9 +627,6 @@ function App() {
           b.y = GROUND_LEVEL;
           b.vy = 0;
           b.onGround = true;
-        } else if (b.y > SEABED_Y) {
-          b.y = SEABED_Y;
-          b.vy = 0;
         }
         k.jumpPressed = false;
       } else {
@@ -737,7 +789,8 @@ function App() {
 
       // Walking: the legs swing with the distance covered, and rest otherwise.
       // Under water the legs kick whenever the player is swimming along.
-      const swimSpeed = roomRef.current === UNDERWATER ? Math.hypot(b.vx, b.vy) : 0;
+      const inSea = roomRef.current === UNDERWATER || roomRef.current === DEEP_SEA;
+      const swimSpeed = inSea ? Math.hypot(b.vx, b.vy) : 0;
       if (b.onGround && Math.abs(b.vx) > 0.3) stepRef.current += Math.abs(b.vx) * WALK_CYCLE_SPEED;
       else if (swimSpeed > 0.3) stepRef.current += swimSpeed * WALK_CYCLE_SPEED;
       else stepRef.current = 0;
@@ -795,17 +848,22 @@ function App() {
       }
 
       // The heart floating in the air beyond the end of the far cloud: jumping
-      // out to it gives a lost heart back (it waits there while none is lost).
+      // out to it picks it up to carry. It is not a life; it is a present for
+      // the rooster. Handing it over makes a heart appear above the two.
       if (
         roomRef.current === HIGH_SKY_WEST &&
-        skyHeartThere.current &&
-        livesRef.current < MAX_LIVES &&
+        skyHeartRef.current === 'floating' &&
         overlaps(hitbox, SKY_HEART)
       ) {
-        skyHeartThere.current = false;
-        setSkyHeart(false);
-        livesRef.current += 1;
-        setLives(livesRef.current);
+        skyHeartRef.current = 'carried';
+        setSkyHeart('carried');
+      } else if (
+        roomRef.current === HIGH_SKY &&
+        skyHeartRef.current === 'carried' &&
+        overlaps(hitbox, { x: ROOSTER_X, y: HIGH_CLOUD.y - 58, width: 64, height: 58 })
+      ) {
+        skyHeartRef.current = 'given';
+        setSkyHeart('given');
       }
 
       // Losing a heart: the last one ends the game, otherwise the player is
@@ -817,6 +875,13 @@ function App() {
         if (livesRef.current <= 0) setGameOver(true);
         else graceFrames.current = HIT_GRACE_FRAMES;
       };
+
+      // Further out in the sea nothing is dangerous; only the clock runs, which
+      // moves the animals there.
+      if (roomRef.current === DEEP_SEA) {
+        sharkRef.current = { ...sharkRef.current, clock: sharkRef.current.clock + 1 };
+        setShark(sharkRef.current);
+      }
 
       // Under the sea: a shark swims back and forth, and there is money lying
       // about. A coin that has been taken comes back after a while.
@@ -1033,8 +1098,8 @@ function App() {
     rainbowEndsAt.current = 0;
     setRainbowSeconds(0);
     sharkBiteFrames.current = 0;
-    skyHeartThere.current = true;
-    setSkyHeart(true);
+    skyHeartRef.current = 'floating';
+    setSkyHeart('floating');
     sharkRef.current = { x: 500, dir: -1, bite: 0, clock: 0 };
     setShark(sharkRef.current);
     seaCoinBackAt.current = SEA_COINS.map(() => 0);
@@ -1373,7 +1438,7 @@ function App() {
         )}
 
         {/* Under the sea: deep blue water, light from above, bubbles and a sandy bottom */}
-        {room === UNDERWATER && (
+        {(room === UNDERWATER || room === DEEP_SEA) && (
           <svg
             className="absolute inset-0 w-full h-full pointer-events-none"
             viewBox="0 0 800 400"
@@ -1416,18 +1481,60 @@ function App() {
                 </circle>
               ))}
             </g>
-            {/* Sandy bottom, rocks and seaweed */}
-            <path d="M0 400 V376 Q120 364 260 378 T520 374 T800 372 V400 Z" fill="#d6b46a" />
-            <g fill="#475569">
-              <ellipse cx="310" cy="380" rx="26" ry="12" />
-              <ellipse cx="620" cy="378" rx="34" ry="14" />
-            </g>
-            <g fill="none" stroke="#15803d" strokeWidth="6" strokeLinecap="round">
-              <path d="M160 380 Q148 350 162 322 Q172 300 158 276" />
-              <path d="M178 380 Q190 356 178 334" />
-              <path d="M500 378 Q512 348 498 320 Q488 300 502 282" />
-              <path d="M760 376 Q748 350 762 326" />
-            </g>
+            {room === UNDERWATER ? (
+              <>
+                {/* Sandy bottom, rocks and seaweed */}
+                <path d="M0 400 V376 Q120 364 260 378 T520 374 T800 372 V400 Z" fill="#d6b46a" />
+                <g fill="#475569">
+                  <ellipse cx="310" cy="380" rx="26" ry="12" />
+                  <ellipse cx="620" cy="378" rx="34" ry="14" />
+                </g>
+                <g fill="none" stroke="#15803d" strokeWidth="6" strokeLinecap="round">
+                  <path d="M160 380 Q148 350 162 322 Q172 300 158 276" />
+                  <path d="M178 380 Q190 356 178 334" />
+                  <path d="M500 378 Q512 348 498 320 Q488 300 502 282" />
+                  <path d="M760 376 Q748 350 762 326" />
+                </g>
+              </>
+            ) : (
+              <>
+                {/* The hole: the right half of the bottom drops away into the dark */}
+                <defs>
+                  <linearGradient id="seaHole" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#082f49" stopOpacity="0" />
+                    <stop offset="100%" stopColor="#020617" />
+                  </linearGradient>
+                </defs>
+                <rect x={SEA_HOLE_X} y="300" width={800 - SEA_HOLE_X} height="100" fill="url(#seaHole)" />
+                {/* The sand covers the left half and ends in a steep edge */}
+                <path
+                  d={`M0 400 V374 Q110 362 240 376 T${SEA_HOLE_X - 14} 370 Q${SEA_HOLE_X + 2} 372 ${SEA_HOLE_X} 400 Z`}
+                  fill="#d6b46a"
+                />
+                <path
+                  d={`M${SEA_HOLE_X - 14} 370 Q${SEA_HOLE_X + 2} 372 ${SEA_HOLE_X} 400`}
+                  fill="none"
+                  stroke="#a16207"
+                  strokeWidth="3"
+                />
+                {/* Rocks and seaweed */}
+                <g fill="#475569">
+                  <ellipse cx="205" cy="380" rx="22" ry="10" />
+                </g>
+                <g fill="none" stroke="#15803d" strokeWidth="6" strokeLinecap="round">
+                  <path d="M20 378 Q8 350 22 324 Q32 304 18 282" />
+                  <path d="M258 380 Q270 356 258 334" />
+                </g>
+                {/* Corals of several kinds and colours on the sand */}
+                <Coral x={62} y={374} color="#f472b6" />
+                <Coral x={112} y={372} color="#fb923c" kind="fan" size={0.9} />
+                <Coral x={160} y={376} color="#a78bfa" kind="brain" />
+                <Coral x={232} y={372} color="#f87171" size={1.15} />
+                <Coral x={296} y={376} color="#fde047" kind="brain" size={0.8} />
+                <Coral x={332} y={374} color="#2dd4bf" kind="fan" size={1.1} />
+                <Coral x={374} y={372} color="#e879f9" size={0.8} />
+              </>
+            )}
           </svg>
         )}
 
@@ -1544,17 +1651,34 @@ function App() {
           <>
             <CloudPlatform {...HIGH_CLOUD} />
             <Rooster x={ROOSTER_X} y={HIGH_CLOUD.y - 58} facing={1} />
-            <div
-              className="absolute bg-white text-gray-800 text-sm font-semibold px-3 py-1.5 rounded-2xl shadow-md whitespace-nowrap"
-              style={{ left: ROOSTER_X - 20, top: HIGH_CLOUD.y - 102 }}
-              role="note"
-            >
-              Cock-a-doodle-doo!
-              <span
-                className="absolute bg-white"
-                style={{ left: 50, bottom: -5, width: 12, height: 12, transform: 'rotate(45deg)' }}
-              />
-            </div>
+            {skyHeart === 'given' ? (
+              // Once the rooster has been given the heart, a big one floats above the two
+              <div
+                className="absolute animate-bounce"
+                style={{
+                  // Midway between the rooster and the player while they stand together
+                  left: Math.min(ROOSTER_X + 60, (ROOSTER_X + 32 + player.x + 20) / 2 - 24),
+                  top: HIGH_CLOUD.y - 128,
+                }}
+              >
+                <Heart
+                  aria-label="Heart above the two"
+                  className="w-12 h-12 text-red-600 fill-red-500 drop-shadow-[0_0_8px_rgba(239,68,68,0.9)]"
+                />
+              </div>
+            ) : (
+              <div
+                className="absolute bg-white text-gray-800 text-sm font-semibold px-3 py-1.5 rounded-2xl shadow-md whitespace-nowrap"
+                style={{ left: ROOSTER_X - 20, top: HIGH_CLOUD.y - 102 }}
+                role="note"
+              >
+                Cock-a-doodle-doo!
+                <span
+                  className="absolute bg-white"
+                  style={{ left: 50, bottom: -5, width: 12, height: 12, transform: 'rotate(45deg)' }}
+                />
+              </div>
+            )}
           </>
         )}
 
@@ -1563,7 +1687,7 @@ function App() {
           <>
             <CloudPlatform {...HIGH_WEST_CLOUD} />
             {/* A heart out in the open air beyond the end of the cloud, to jump out to */}
-            {skyHeart && (
+            {skyHeart === 'floating' && (
               <div
                 className="absolute animate-pulse"
                 style={{ transform: `translate(${SKY_HEART.x}px, ${SKY_HEART.y}px)` }}
@@ -1632,6 +1756,65 @@ function App() {
             <Shark x={shark.x} y={SHARK.y} dir={shark.dir} bite={shark.bite} />
             <p className="absolute bottom-1 inset-x-0 text-center text-xs font-semibold text-sky-100/90 pointer-events-none">
               Swim with the arrow keys · swim up to the surface to get out
+            </p>
+          </>
+        )}
+
+        {/* Further out in the sea: a turtle, more fish, frogs and a herring. None of them do any harm. */}
+        {room === DEEP_SEA && (
+          <>
+            {DEEP_SEA_FISH.map(fish => {
+              const span = WORLD_WIDTH - 30;
+              const travelled = (fish.start + shark.clock * fish.speed) % (span * 2);
+              const goingRight = travelled < span;
+              return (
+                <SmallFish
+                  key={fish.color}
+                  x={goingRight ? travelled : span * 2 - travelled}
+                  y={fish.y + Math.sin(shark.clock * 0.04 + fish.start) * 7}
+                  dir={goingRight ? 1 : -1}
+                  color={fish.color}
+                  stripe={fish.stripe}
+                />
+              );
+            })}
+            {(() => {
+              // The herring darts to and fro near the surface...
+              const span = WORLD_WIDTH - 48;
+              const travelled = (500 + shark.clock * 2.4) % (span * 2);
+              const goingRight = travelled < span;
+              return (
+                <Herring
+                  x={goingRight ? travelled : span * 2 - travelled}
+                  y={48 + Math.sin(shark.clock * 0.07) * 10}
+                  dir={goingRight ? 1 : -1}
+                />
+              );
+            })()}
+            {(() => {
+              // ...and the turtle paddles slowly across the middle.
+              const span = WORLD_WIDTH - 72;
+              const travelled = (900 + shark.clock * 0.6) % (span * 2);
+              const goingRight = travelled < span;
+              return (
+                <Turtle
+                  x={goingRight ? travelled : span * 2 - travelled}
+                  y={140 + Math.sin(shark.clock * 0.02) * 14}
+                  dir={goingRight ? 1 : -1}
+                  flap={Math.sin(shark.clock * 0.08) * 22}
+                />
+              );
+            })()}
+            {/* One frog sits on the sand; the other swims up and down, kicking */}
+            <Frog x={78} y={344} dir={1} kick={0} />
+            <Frog
+              x={300 + Math.sin(shark.clock * 0.011) * 60}
+              y={230 + Math.sin(shark.clock * 0.017) * 70}
+              dir={Math.cos(shark.clock * 0.011) >= 0 ? 1 : -1}
+              kick={(Math.sin(shark.clock * 0.16) + 1) / 2}
+            />
+            <p className="absolute bottom-1 left-2 text-xs font-semibold text-sky-100/90 pointer-events-none">
+              Swim left to go back
             </p>
           </>
         )}
@@ -1912,6 +2095,18 @@ function App() {
 
           {/* Things bought in the shop */}
           <Wearables wearing={save.wearing} isHen={isHen} facing={player.facing} />
+
+          {/* The heart from the sky, carried in the hand: held out in front */}
+          {skyHeart === 'carried' && (
+            <div
+              className="absolute"
+              style={{ left: player.facing === 1 ? 30 : -10, top: 12 }}
+              role="img"
+              aria-label="Carrying the heart"
+            >
+              <Heart className="w-5 h-5 text-red-600 fill-red-500" />
+            </div>
+          )}
         </div>
 
         {/* Follower chick from the shop: a small copy that trails behind */}

@@ -188,6 +188,167 @@ export function SmallFish({
   );
 }
 
+/** A branching coral growing up from (x, y), in the given colour and size. */
+export function Coral({
+  x,
+  y,
+  color,
+  size = 1,
+  kind = 'branch',
+}: {
+  x: number;
+  y: number;
+  color: string;
+  size?: number;
+  kind?: 'branch' | 'fan' | 'brain';
+}) {
+  return (
+    <g data-coral transform={`translate(${x} ${y}) scale(${size})`}>
+      {kind === 'branch' && (
+        <g fill="none" stroke={color} strokeWidth="6" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M0 2 V-30" />
+          <path d="M0 -10 L-12 -24 V-38" />
+          <path d="M0 -18 L11 -30 V-46" />
+          <path d="M-12 -28 L-20 -36" />
+          <path d="M11 -36 L20 -42" />
+          <path d="M0 -30 L-3 -44" />
+        </g>
+      )}
+      {kind === 'fan' && (
+        <g>
+          <path d="M0 2 V-10" stroke={color} strokeWidth="5" strokeLinecap="round" />
+          <path d="M0 -10 Q-34 -22 -22 -48 Q0 -64 22 -48 Q34 -22 0 -10 Z" fill={color} opacity="0.85" />
+          <g fill="none" stroke="#ffffff" strokeWidth="1.2" opacity="0.6">
+            <path d="M0 -12 V-54 M0 -12 L-16 -46 M0 -12 L16 -46 M0 -12 L-24 -32 M0 -12 L24 -32" />
+          </g>
+        </g>
+      )}
+      {kind === 'brain' && (
+        <g>
+          <path d="M-22 2 Q-24 -24 0 -24 Q24 -24 22 2 Z" fill={color} />
+          <g fill="none" stroke="#ffffff" strokeWidth="1.6" strokeLinecap="round" opacity="0.65">
+            <path d="M-15 -4 q4 -6 8 0 t8 0 t8 0" />
+            <path d="M-13 -12 q4 -6 8 0 t8 0 t8 0" />
+            <path d="M-6 -19 q3 -4 6 0 t6 0" />
+          </g>
+        </g>
+      )}
+    </g>
+  );
+}
+
+/** A sea turtle, 72×46, drawn facing left and mirrored when swimming right. `flap` moves its flippers. */
+export function Turtle({ x, y, dir, flap }: { x: number; y: number; dir: number; flap: number }) {
+  return (
+    <svg
+      className="absolute pointer-events-none"
+      style={{ transform: `translate(${x}px, ${y}px) scaleX(${-dir})` }}
+      width="72"
+      height="46"
+      viewBox="0 0 72 46"
+      overflow="visible"
+      role="img"
+      aria-label="Turtle"
+    >
+      {/* Tail and back flipper */}
+      <path d="M60 26 L71 30 L61 31 Z" fill="#65a30d" stroke="#365314" strokeWidth="1" />
+      <path
+        d="M50 30 Q60 36 62 44 Q52 42 46 33 Z"
+        fill="#65a30d"
+        stroke="#365314"
+        strokeWidth="1"
+        transform={`rotate(${-flap * 0.6} 50 30)`}
+      />
+      {/* Front flipper, flapping */}
+      <path
+        d="M24 30 Q14 40 6 44 Q14 30 22 24 Z"
+        fill="#65a30d"
+        stroke="#365314"
+        strokeWidth="1"
+        transform={`rotate(${flap} 24 28)`}
+      />
+      {/* Head and neck */}
+      <path d="M20 24 Q10 22 6 16 Q2 10 8 7 Q16 4 20 12 Q23 18 26 20 Z" fill="#84cc16" stroke="#365314" strokeWidth="1.2" />
+      <circle cx="9" cy="11" r="1.6" fill="#0f172a" />
+      <path d="M4 15 Q7 16.5 10 15.5" fill="none" stroke="#365314" strokeWidth="0.9" strokeLinecap="round" />
+      {/* Shell with its pattern */}
+      <path d="M16 28 Q18 6 40 6 Q62 6 64 28 Q40 36 16 28 Z" fill="#15803d" stroke="#14532d" strokeWidth="1.5" />
+      <g fill="none" stroke="#86efac" strokeWidth="1.3" opacity="0.8">
+        <path d="M40 8 V30" />
+        <path d="M27 11 L31 30 M53 11 L49 30" />
+        <path d="M19 21 Q40 26 61 21" />
+      </g>
+      {/* Belly rim */}
+      <path d="M16 28 Q40 36 64 28 Q40 33 16 28 Z" fill="#fef3c7" stroke="#14532d" strokeWidth="1" />
+    </svg>
+  );
+}
+
+/** A frog, 34×30, drawn facing left. `kick` (0–1) stretches its hind legs out when it swims. */
+export function Frog({ x, y, dir, kick }: { x: number; y: number; dir: number; kick: number }) {
+  const leg = 6 + kick * 9; // How far back the hind feet reach
+  return (
+    <svg
+      className="absolute pointer-events-none"
+      style={{ transform: `translate(${x}px, ${y}px) scaleX(${-dir})` }}
+      width="34"
+      height="30"
+      viewBox="0 0 34 30"
+      overflow="visible"
+      role="img"
+      aria-label="Frog"
+    >
+      {/* Hind legs */}
+      <g fill="none" stroke="#15803d" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
+        <path d={`M24 20 L${22 + leg * 0.4} ${27 - kick * 6} L${24 + leg} ${27 - kick * 3}`} />
+        <path d={`M24 14 L${23 + leg * 0.4} ${8 + kick * 4} L${25 + leg} ${6 + kick * 6}`} />
+      </g>
+      {/* Front legs */}
+      <g fill="none" stroke="#15803d" strokeWidth="3" strokeLinecap="round">
+        <path d="M11 22 L7 28 M7 28 L3 28" />
+      </g>
+      {/* Body and head */}
+      <ellipse cx="16" cy="18" rx="12" ry="9" fill="#22c55e" stroke="#14532d" strokeWidth="1.2" />
+      <ellipse cx="17" cy="21" rx="8" ry="4.5" fill="#bbf7d0" />
+      {/* Big eyes on top of the head */}
+      <circle cx="8" cy="9" r="4.2" fill="#22c55e" stroke="#14532d" strokeWidth="1.2" />
+      <circle cx="7.5" cy="9" r="2.6" fill="#ffffff" />
+      <circle cx="7" cy="9.2" r="1.3" fill="#0f172a" />
+      {/* Mouth */}
+      <path d="M4 17 Q10 21 17 18" fill="none" stroke="#14532d" strokeWidth="1" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+/** A herring: a slender silver fish, 48×16, drawn facing left and mirrored when swimming right. */
+export function Herring({ x, y, dir }: { x: number; y: number; dir: number }) {
+  return (
+    <svg
+      className="absolute pointer-events-none"
+      style={{ transform: `translate(${x}px, ${y}px) scaleX(${-dir})` }}
+      width="48"
+      height="16"
+      viewBox="0 0 48 16"
+      overflow="visible"
+      role="img"
+      aria-label="Herring"
+    >
+      {/* Forked tail and fins */}
+      <path d="M38 8 L48 1 L44 8 L48 15 Z" fill="#64748b" stroke="#334155" strokeWidth="0.8" strokeLinejoin="round" />
+      <path d="M20 3 L26 -1 L28 3.4 Z" fill="#64748b" stroke="#334155" strokeWidth="0.7" />
+      <path d="M22 12.6 L26 16 L28 12.4 Z" fill="#94a3b8" stroke="#334155" strokeWidth="0.7" />
+      {/* Body: blue-grey back, silver belly */}
+      <path d="M1 8 Q10 1 26 2.5 Q36 4 40 8 Q36 12 26 13.5 Q10 15 1 8 Z" fill="#e2e8f0" stroke="#334155" strokeWidth="1" />
+      <path d="M1 8 Q10 1 26 2.5 Q36 4 40 8 Q24 6 1 8 Z" fill="#475569" />
+      {/* Shine along the side, gill and eye */}
+      <path d="M10 9.5 H34" stroke="#ffffff" strokeWidth="1.2" strokeLinecap="round" opacity="0.8" />
+      <path d="M11 4.5 Q13 8 11 11.5" fill="none" stroke="#334155" strokeWidth="0.8" />
+      <circle cx="6" cy="7" r="1.8" fill="#fef9c3" stroke="#334155" strokeWidth="0.6" />
+      <circle cx="5.8" cy="7" r="0.9" fill="#0f172a" />
+    </svg>
+  );
+}
+
 /** A trampoline whose mat is `width` wide, with its top edge at (x, y). */
 export function Trampoline({ x, y, width }: { x: number; y: number; width: number }) {
   const w = width + 12; // The frame sticks out a little on each side
