@@ -35,6 +35,10 @@ const curveY = (curves: Curve[], x: number) => {
   return (1 - t) * (1 - t) * y0 + 2 * (1 - t) * t * cy + t * t * y1;
 };
 
+/** Height of the top of the far and the near row of hills at `x`. */
+export const farHillY = (x: number) => curveY(FAR_HILL, x);
+export const nearHillY = (x: number) => curveY(NEAR_HILL, x);
+
 /** Repeatable "random" numbers between 0 and 1, so the grass looks the same every time. */
 const randomFrom = (seed: number) => () => {
   seed = (seed * 1664525 + 1013904223) % 4294967296;
@@ -64,16 +68,44 @@ interface GrassOptions {
   seed: number;
 }
 
-/** A row of blades along a line, dealt into `shades` paths for different greens. */
-const grassRow = ({ yAt, spacing, minHeight, maxHeight, halfWidth, shades, seed }: GrassOptions) => {
+// The wind: how far each blade's tip is pushed sideways, as a share of its
+// height, at the moments the animation passes through. A lull, a gust, an
+// easing off, a stronger gust, and back to the lull.
+const WIND = [-0.12, 0.55, 0.3, 0.7];
+
+/** One colour's worth of a grass row: its shape at rest, and the shapes it sways through. */
+export interface SwayingGrass {
+  rest: string;
+  sway: string; // The `values` of an SVG <animate> on the path's `d`
+}
+
+/**
+ * A row of blades along a line, dealt into `shades` groups for different greens.
+ * Each blade keeps its foot where it is and only bends, so the row does not
+ * slide along the ground when the wind moves it.
+ */
+const grassRow = ({
+  yAt,
+  spacing,
+  minHeight,
+  maxHeight,
+  halfWidth,
+  shades,
+  seed,
+}: GrassOptions): SwayingGrass[] => {
   const random = randomFrom(seed);
-  const paths = Array.from({ length: shades }, () => '');
+  const frames = Array.from({ length: shades }, () => WIND.map(() => ''));
   for (let x = -2; x < 804; x += spacing * (0.6 + random() * 0.8)) {
     const height = minHeight + random() * (maxHeight - minHeight);
     const lean = (random() - 0.5) * height * 0.9;
-    paths[Math.floor(random() * shades)] += blade(x, yAt(x), height, lean, halfWidth);
+    const give = 0.7 + random() * 0.6; // Some blades bend more easily than others
+    const y = yAt(x);
+    const shade = frames[Math.floor(random() * shades)];
+    WIND.forEach((wind, i) => {
+      shade[i] += blade(x, y, height, lean + wind * give * height, halfWidth);
+    });
   }
-  return paths;
+  return frames.map(shade => ({ rest: shade[0], sway: [...shade, shade[0]].join(';') }));
 };
 
 /** Small tufts of three blades scattered over an area. */

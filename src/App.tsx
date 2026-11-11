@@ -2,7 +2,17 @@ import { useState, useEffect, useRef } from 'react';
 import { Egg, Heart } from 'lucide-react';
 import chickImage from './assets/chick.png';
 import { Coin, Shop, Wearables } from './Shop';
-import { Fisher, KnifeIcon, Shark, Signpost, WaterBottle } from './Props';
+import {
+  CloudPlatform,
+  Fisher,
+  KnifeIcon,
+  Rooster,
+  Shark,
+  Signpost,
+  SmallFish,
+  Trampoline,
+  WaterBottle,
+} from './Props';
 import {
   FAR_HILL_GRASS,
   FAR_HILL_TUFTS,
@@ -10,7 +20,9 @@ import {
   GROUND_TUFTS,
   NEAR_HILL_GRASS,
   NEAR_HILL_TUFTS,
+  farHillY,
 } from './grass';
+import { GrassBlades } from './GrassBlades';
 import { ItemId, SHOP_ITEMS, SaveData, loadSave, storeSave } from './shopData';
 import bunnyImage from './assets/bunny.png';
 
@@ -132,7 +144,8 @@ const initialBody = () => ({
   vy: 0,
   onGround: true,
   platform: null as number | null, // Index of the platform being stood on
-  floating: false, // Rising from the trampoline up to the sky
+  floating: false, // Rising from a trampoline up to the sky
+  floatSpeed: 0, // How fast (px per frame, negative = up)
   facing: 1, // 1 = right, -1 = left
   doubleJumped: false, // The mid-air jump has been used since last standing
   flip: 0, // Degrees of the somersault turned so far (0 = not turning)
@@ -147,12 +160,88 @@ const TRAMPOLINE_PLACE = 1;
 const SKY = 2;
 const BEACH = 3; // Further on past the trampoline place
 const UNDERWATER = 4; // Down in the sea off the beach
+const HIGH_SKY = 5; // Higher up still, reached from the trampoline on the sky cloud
+const HIGH_SKY_WEST = 6; // The next place along the big cloud, out of the left side
 type Room =
+  | typeof HIGH_SKY
+  | typeof HIGH_SKY_WEST
   | typeof MEADOW
   | typeof TRAMPOLINE_PLACE
   | typeof SKY
   | typeof BEACH
   | typeof UNDERWATER;
+
+// The backdrop of a place: where the sun is, the mountain range, its snow
+// caps, and any trees on the far hills.
+interface Scenery {
+  sun: Position;
+  mountains: string;
+  snowCaps: string[];
+  trees: { x: number; size: number }[];
+}
+
+/**
+ * A mountain range from its corner points (valleys and peaks in turn), and a
+ * snow cap for each peak listed, following the slopes down `depth` px.
+ */
+const mountainRange = (points: [number, number][], snowyPeaks: number[], depth: number) => {
+  const mountains = `M0 330 ${points.map(([x, y]) => `L${x} ${y}`).join(' ')} L800 330 Z`;
+  const snowCaps = snowyPeaks.map(i => {
+    const [px, py] = points[i];
+    // How far along each slope the cap reaches
+    const along = ([x, y]: [number, number]) => {
+      const t = depth / (y - py);
+      return [px + (x - px) * t, py + depth];
+    };
+    const [lx, ly] = along(points[i - 1]);
+    const [rx, ry] = along(points[i + 1]);
+    const at = (t: number, lift: number) =>
+      `L${(lx + (rx - lx) * t).toFixed(1)} ${(ly + (ry - ly) * t - lift).toFixed(1)}`;
+    // A jagged lower edge between the two slopes
+    return `M${px} ${py} L${lx.toFixed(1)} ${ly.toFixed(1)} ${at(0.28, 5)} ${at(0.5, -4)} ${at(0.72, 6)} L${rx.toFixed(1)} ${ry.toFixed(1)} Z`;
+  });
+  return { mountains, snowCaps };
+};
+
+const MEADOW_SCENERY: Scenery = {
+  sun: { x: 540, y: 70 },
+  mountains:
+    'M0 330 L0 250 L90 170 L170 240 L260 150 L370 250 L450 200 L540 260 L640 160 L740 245 L800 205 L800 330 Z',
+  snowCaps: [
+    'M260 150 L237 176 L252 172 L262 180 L272 171 L286 174 Z',
+    'M640 160 L619 182 L633 178 L642 186 L652 177 L664 180 Z',
+  ],
+  trees: [],
+};
+
+// At the trampoline place the sun is in the left corner (just below the score
+// boxes), the mountains are much taller, and a few trees stand on the hills.
+const TRAMPOLINE_SCENERY: Scenery = {
+  sun: { x: 62, y: 112 },
+  ...mountainRange(
+    [
+      // The first peak is kept low, so that it does not stand in front of the sun.
+      [0, 215],
+      [118, 152],
+      [165, 205],
+      [245, 38],
+      [345, 215],
+      [425, 105],
+      [505, 225],
+      [610, 28],
+      [705, 200],
+      [765, 118],
+      [800, 165],
+    ],
+    [1, 3, 5, 7, 9],
+    30
+  ),
+  trees: [
+    { x: 135, size: 1 },
+    { x: 470, size: 0.85 },
+    { x: 690, size: 1.1 },
+  ],
+};
 
 // Swimming under water
 const SWIM_ACCEL = 0.5;
@@ -168,8 +257,22 @@ const SEA_COINS: Position[] = [
   { x: 560, y: 260 },
   { x: 710, y: 335 },
 ];
+// The little fish: where each starts along its to-and-fro route, its depth,
+// its speed (px per frame) and its colours.
+const SEA_FISH = [
+  { start: 60, y: 70, speed: 1.1, color: '#fb923c', stripe: '#ffffff' },
+  { start: 900, y: 120, speed: 0.8, color: '#facc15', stripe: '#1d4ed8' },
+  { start: 420, y: 245, speed: 1.4, color: '#f472b6', stripe: '#7e22ce' },
+  { start: 1250, y: 290, speed: 0.7, color: '#4ade80', stripe: '#166534' },
+  { start: 250, y: 320, speed: 1.0, color: '#a78bfa', stripe: '#fde047' },
+  { start: 700, y: 45, speed: 1.6, color: '#f87171', stripe: '#fef3c7' },
+];
 const SEA_COIN_RESPAWN_MS = 30_000; // A taken coin is back after half a minute
-const ROOM_ROW: Room[] = [MEADOW, TRAMPOLINE_PLACE, BEACH]; // Left to right
+// Each row lists places lying side by side, left to right.
+const ROOM_ROWS: Room[][] = [
+  [MEADOW, TRAMPOLINE_PLACE, BEACH],
+  [HIGH_SKY_WEST, HIGH_SKY],
+];
 
 const BEACH_WATER_X = WORLD_WIDTH / 2; // Sand to the left of this, water to the right
 const WADING_SPEED = 2.5; // Top speed in the water (half the normal speed)
@@ -184,6 +287,26 @@ const FLIP_DEGREES_PER_FRAME = 15; // The somersault takes 24 frames
 const TRAMPOLINE = { x: 360, y: 314, width: 80 };
 const SKY_CLOUD = { x: 230, y: 250, width: 340 };
 const FLOAT_SPEED = -4; // px per frame while floating upwards
+// The second trampoline stands on the left end of the sky cloud and shoots the
+// player up to a big cloud, half the picture wide, where the rooster lives.
+const SKY_TRAMPOLINE = { x: 246, y: 226, width: 70 };
+const FAST_FLOAT_SPEED = -16;
+// It covers the left half of the picture, right out to the edge, and carries
+// on in the next place to the west, where it covers the right half.
+const HIGH_CLOUD = { x: 0, y: 270, width: 400 };
+const HIGH_WEST_CLOUD = { x: 400, y: 270, width: 400 };
+// The cloud to stand on in each of the places up in the sky.
+const SKY_CLOUDS: { [room: number]: { x: number; y: number; width: number } } = {
+  [SKY]: SKY_CLOUD,
+  [HIGH_SKY]: HIGH_CLOUD,
+  [HIGH_SKY_WEST]: HIGH_WEST_CLOUD,
+};
+const SKY_HEART: Position = { x: 290, y: 175 }; // In the air, a jump out from the cloud's end
+const HIGH_SKY_FLOAT_TOP = 150;
+const HIGH_SKY_ARRIVAL_X = 230; // Where the fast trampoline delivers the player
+const ROOSTER_X = 50; // Where the rooster stands on the big cloud
+const BUNNY_STEP_SPEED = 0.16; // Foot swing (radians) per px the bunny walks
+const SHARK_BITE_FRAMES = 36; // How long the shark's mouth takes to snap open and shut
 const SKY_FLOAT_TOP = 150; // The float ends this high in the sky, above the cloud
 const BLUE_EGG: Position = { x: 480, y: 215 }; // On the sky cloud
 const BLUE_EGG_MULTIPLIER = 2; // Coins are worth this much more for the rest of the level
@@ -311,7 +434,11 @@ function App() {
   const heatRef = useRef(0); // 0 = normal, 1 = fully red
   // Under the sea: the shark, and for each coin the clock time at which it is
   // back (0 = it is lying there now).
-  const sharkRef = useRef({ x: 500, dir: -1 });
+  const sharkRef = useRef({ x: 500, dir: -1, bite: 0, clock: 0 });
+  const sharkBiteFrames = useRef(0);
+  // The heart in the sky beyond the far cloud: one per game.
+  const skyHeartThere = useRef(true);
+  const [skyHeart, setSkyHeart] = useState(true);
   const [shark, setShark] = useState(sharkRef.current);
   const seaCoinBackAt = useRef<number[]>(SEA_COINS.map(() => 0));
   const [seaCoinsThere, setSeaCoinsThere] = useState<boolean[]>(SEA_COINS.map(() => true));
@@ -336,6 +463,8 @@ function App() {
   // The grass blades stick up above the shapes that the night tint covers,
   // so they are darkened on their own.
   const grassFilter = isNight ? 'brightness(0.55)' : 'brightness(1)';
+  // The trampoline place has its own backdrop; everywhere else uses the meadow's.
+  const scenery = room === TRAMPOLINE_PLACE ? TRAMPOLINE_SCENERY : MEADOW_SCENERY;
   const legAngle = Math.sin(player.step) * LEG_SWING_DEGREES;
 
   // Scale the game to fill most of the window, keeping its 2:1 shape.
@@ -417,7 +546,11 @@ function App() {
 
       // Horizontal: accelerate towards the held direction, otherwise slow down.
       // (No steering while floating up from the trampoline.)
-      const room = roomRef.current;
+      // `room` is where the player is while this frame is worked out. Walking
+      // out of the side of a place changes it straight away, so that the rest
+      // of the frame (what there is to land on) already uses the new place.
+      const startRoom = roomRef.current;
+      let room: Room = startRoom;
       let nextRoom = room;
       const dir = b.floating ? 0 : (k.right ? 1 : 0) - (k.left ? 1 : 0);
       if (room === UNDERWATER) {
@@ -461,14 +594,18 @@ function App() {
       }
       b.x += b.vx;
       const maxX = WORLD_WIDTH - PLAYER_SIZE;
-      // The places lie in a row: meadow – trampoline place – beach. Walking
-      // all the way out of one side leads to the neighbour on that side.
-      const rowIndex = ROOM_ROW.indexOf(room);
-      if (rowIndex >= 0 && b.x > maxX && b.vx > 0 && rowIndex < ROOM_ROW.length - 1) {
-        nextRoom = ROOM_ROW[rowIndex + 1];
+      // Places that lie side by side form a row (on the ground: meadow –
+      // trampoline place – beach; high in the sky: the two cloud places).
+      // Walking all the way out of one side leads to the neighbour on that side.
+      const row = ROOM_ROWS.find(r => r.includes(room)) ?? [];
+      const rowIndex = row.indexOf(room);
+      if (rowIndex >= 0 && b.x > maxX && b.vx > 0 && rowIndex < row.length - 1) {
+        nextRoom = row[rowIndex + 1];
+        room = nextRoom;
         b.x = 0;
       } else if (rowIndex > 0 && b.x < 0 && b.vx < 0) {
-        nextRoom = ROOM_ROW[rowIndex - 1];
+        nextRoom = row[rowIndex - 1];
+        room = nextRoom;
         b.x = maxX;
       } else if (b.x < 0 || b.x > maxX) {
         b.x = Math.max(0, Math.min(maxX, b.x));
@@ -483,12 +620,22 @@ function App() {
       if (b.floating) {
         // Floating up from the trampoline: a steady rise without gravity, out
         // of the top of the trampoline place and up past the cloud in the sky.
-        b.vy = FLOAT_SPEED;
+        // The trampoline on the sky cloud does the same, only much faster, up
+        // to the big cloud higher still.
+        const fast = b.floatSpeed === FAST_FLOAT_SPEED;
+        b.vy = b.floatSpeed;
         nextY = b.y + b.vy;
         if (room === TRAMPOLINE_PLACE && nextY < -PLAYER_SIZE) {
           nextRoom = SKY;
           nextY = WORLD_HEIGHT;
-        } else if (room === SKY && nextY <= SKY_FLOAT_TOP) {
+        } else if (room === SKY && fast && nextY < -PLAYER_SIZE) {
+          nextRoom = HIGH_SKY;
+          nextY = WORLD_HEIGHT;
+          b.x = HIGH_SKY_ARRIVAL_X;
+        } else if (
+          (room === SKY && !fast && nextY <= SKY_FLOAT_TOP) ||
+          (room === HIGH_SKY && nextY <= HIGH_SKY_FLOAT_TOP)
+        ) {
           b.floating = false;
           b.vy = 0;
         }
@@ -528,24 +675,33 @@ function App() {
             if (isOver(TRAMPOLINE) && feetBefore <= TRAMPOLINE.y + 0.01 && feetAfter >= TRAMPOLINE.y) {
               nextY = TRAMPOLINE.y - PLAYER_SIZE;
               b.floating = true;
-              b.vy = FLOAT_SPEED;
+              b.floatSpeed = FLOAT_SPEED;
             }
-          } else if (
-            room === SKY &&
-            isOver(SKY_CLOUD) &&
-            feetBefore <= SKY_CLOUD.y + 0.01 &&
-            feetAfter >= SKY_CLOUD.y
-          ) {
-            nextY = SKY_CLOUD.y - PLAYER_SIZE;
-            b.vy = 0;
-            b.onGround = true;
+          } else if (room in SKY_CLOUDS) {
+            const cloud = SKY_CLOUDS[room];
+            if (
+              room === SKY &&
+              isOver(SKY_TRAMPOLINE) &&
+              feetBefore <= SKY_TRAMPOLINE.y + 0.01 &&
+              feetAfter >= SKY_TRAMPOLINE.y
+            ) {
+              // The trampoline on the cloud shoots the player up at full speed.
+              nextY = SKY_TRAMPOLINE.y - PLAYER_SIZE;
+              b.floating = true;
+              b.floatSpeed = FAST_FLOAT_SPEED;
+            } else if (isOver(cloud) && feetBefore <= cloud.y + 0.01 && feetAfter >= cloud.y) {
+              nextY = cloud.y - PLAYER_SIZE;
+              b.vy = 0;
+              b.onGround = true;
+            }
           }
         }
-        if (room === SKY) {
-          // There is no ground in the sky: stepping off the cloud means
-          // falling out of the bottom and back down to the trampoline place.
+        if (room in SKY_CLOUDS) {
+          // There is no ground in the sky: stepping off a cloud means falling
+          // out of the bottom, down to the place below (the lower cloud's
+          // sky, or the trampoline place).
           if (nextY > WORLD_HEIGHT) {
-            nextRoom = TRAMPOLINE_PLACE;
+            nextRoom = room === SKY ? TRAMPOLINE_PLACE : SKY;
             nextY = -PLAYER_SIZE;
           }
         } else if (!b.floating && nextY >= GROUND_LEVEL) {
@@ -573,7 +729,7 @@ function App() {
       }
       }
 
-      if (nextRoom !== room) {
+      if (nextRoom !== startRoom) {
         roomRef.current = nextRoom;
         setRoom(nextRoom);
         trail.current = []; // The follower chick comes along instead of walking the old route
@@ -638,6 +794,20 @@ function App() {
         setBonusLevel(levelNow);
       }
 
+      // The heart floating in the air beyond the end of the far cloud: jumping
+      // out to it gives a lost heart back (it waits there while none is lost).
+      if (
+        roomRef.current === HIGH_SKY_WEST &&
+        skyHeartThere.current &&
+        livesRef.current < MAX_LIVES &&
+        overlaps(hitbox, SKY_HEART)
+      ) {
+        skyHeartThere.current = false;
+        setSkyHeart(false);
+        livesRef.current += 1;
+        setLives(livesRef.current);
+      }
+
       // Losing a heart: the last one ends the game, otherwise the player is
       // safe for a moment (and cries).
       const hurt = () => {
@@ -657,11 +827,18 @@ function App() {
         if (sharkX <= 0) sharkDir = 1;
         if (sharkX >= WORLD_WIDTH - SHARK.width) sharkDir = -1;
         sharkX = Math.max(0, Math.min(WORLD_WIDTH - SHARK.width, sharkX));
-        sharkRef.current = { x: sharkX, dir: sharkDir };
-        setShark(sharkRef.current);
         if (overlaps(hitbox, { x: sharkX + 8, y: SHARK.y + 6, width: SHARK.width - 16, height: SHARK.height - 12 })) {
+          const heartsBefore = livesRef.current;
           hurt();
+          // Each heart the shark takes makes its mouth snap wide open and shut again.
+          if (livesRef.current < heartsBefore) sharkBiteFrames.current = SHARK_BITE_FRAMES;
         }
+        if (sharkBiteFrames.current > 0) sharkBiteFrames.current -= 1;
+        // 0 → 1 → 0 over the bite: how far open the mouth is.
+        const bite = Math.sin((sharkBiteFrames.current / SHARK_BITE_FRAMES) * Math.PI);
+        // The clock drives the little fish, which swim to and fro on their own.
+        sharkRef.current = { x: sharkX, dir: sharkDir, bite, clock: s.clock + 1 };
+        setShark(sharkRef.current);
 
         let changed = false;
         SEA_COINS.forEach((spot, i) => {
@@ -855,7 +1032,10 @@ function App() {
     heatRef.current = 0;
     rainbowEndsAt.current = 0;
     setRainbowSeconds(0);
-    sharkRef.current = { x: 500, dir: -1 };
+    sharkBiteFrames.current = 0;
+    skyHeartThere.current = true;
+    setSkyHeart(true);
+    sharkRef.current = { x: 500, dir: -1, bite: 0, clock: 0 };
     setShark(sharkRef.current);
     seaCoinBackAt.current = SEA_COINS.map(() => 0);
     setSeaCoinsThere(SEA_COINS.map(() => true));
@@ -904,6 +1084,7 @@ function App() {
       <div style={{ width: WORLD_WIDTH * scale, height: WORLD_HEIGHT * scale }}>
       <div
         className="relative w-[800px] h-[400px] bg-gradient-to-b from-sky-400 to-sky-100 rounded-lg shadow-2xl overflow-hidden"
+        data-room={room}
         style={{ transform: `scale(${scale})`, transformOrigin: 'top left' }}
       >
         {/* Background scenery: sun, clouds, distant mountains and rolling hills */}
@@ -962,8 +1143,20 @@ function App() {
               transition: NIGHT_TRANSITION,
             }}
           >
+            {/* Drawn around (540, 70) and moved to where this place has its sun */}
+            <g transform={`translate(${scenery.sun.x - 540} ${scenery.sun.y - 70})`}>
             <circle cx="540" cy="70" r="75" fill="url(#sunGlow)" />
             <circle cx="540" cy="70" r="30" fill="#fde047" />
+            {/* Sunglasses and a smile */}
+            <g aria-label="Sunglasses">
+              <path d="M511 62 H569" stroke="#111827" strokeWidth="2.5" strokeLinecap="round" />
+              <path d="M517 60 H537 Q538 60 538 62 Q538 76 527 76 Q516 76 516 62 Q516 60 517 60 Z" fill="#111827" />
+              <path d="M543 60 H563 Q564 60 564 62 Q564 76 553 76 Q542 76 542 62 Q542 60 543 60 Z" fill="#111827" />
+              {/* Glints on the lenses */}
+              <path d="M520 64 L525 64 M546 64 L551 64" stroke="#e5e7eb" strokeWidth="1.5" strokeLinecap="round" />
+            </g>
+            <path d="M529 84 Q540 93 551 84" fill="none" stroke="#b45309" strokeWidth="2.5" strokeLinecap="round" />
+            </g>
           </g>
 
           {/* Moon: rises from behind the mountains when night falls */}
@@ -1030,31 +1223,45 @@ function App() {
           {/* The landscape is not visible from up in the sky */}
           {hasMeadowLand && (
           <g>
-          {/* Distant mountains */}
-          <path
-            d="M0 330 L0 250 L90 170 L170 240 L260 150 L370 250 L450 200 L540 260 L640 160 L740 245 L800 205 L800 330 Z"
-            fill="#93c5fd"
-            opacity="0.7"
-          />
+          {/* Distant mountains (taller ones at the trampoline place) */}
+          <path d={scenery.mountains} fill="#93c5fd" opacity="0.7" />
           {/* Snow caps */}
-          <path d="M260 150 L237 176 L252 172 L262 180 L272 171 L286 174 Z" fill="#ffffff" opacity="0.8" />
-          <path d="M640 160 L619 182 L633 178 L642 186 L652 177 L664 180 Z" fill="#ffffff" opacity="0.8" />
+          {scenery.snowCaps.map(cap => (
+            <path key={cap} d={cap} fill="#ffffff" opacity="0.8" />
+          ))}
 
           {/* Far hills, with blades of grass along the top and tufts on the slope */}
           <g style={{ filter: grassFilter, transition: 'filter 3s ease-in-out' }}>
-            <path d={FAR_HILL_GRASS[0]} fill="#4ade80" />
-            <path d={FAR_HILL_GRASS[1]} fill="#bbf7d0" />
+            {/* Each blade bends back and forth in the wind */}
+            <GrassBlades grass={FAR_HILL_GRASS[0]} fill="#4ade80" seconds={4.6} />
+            <GrassBlades grass={FAR_HILL_GRASS[1]} fill="#bbf7d0" seconds={4.6} />
           </g>
           <path
             d="M0 330 L0 270 Q100 215 220 265 T440 260 T660 250 T800 265 L800 330 Z"
             fill="#86efac"
           />
           <path d={FAR_HILL_TUFTS} fill="#4ade80" />
+          {/* A few trees standing on the far hills (only at the trampoline place) */}
+          <g style={{ filter: grassFilter, transition: 'filter 3s ease-in-out' }}>
+            {scenery.trees.map(tree => (
+              <g
+                key={tree.x}
+                data-tree
+                transform={`translate(${tree.x} ${farHillY(tree.x) + 5}) scale(${tree.size})`}
+              >
+                <path d="M-3.5 0 L-2.5 -26 H2.5 L3.5 0 Z" fill="#78350f" />
+                <circle cx="-10" cy="-30" r="12" fill="#15803d" />
+                <circle cx="10" cy="-31" r="12" fill="#166534" />
+                <circle cx="0" cy="-42" r="14" fill="#16a34a" />
+                <circle cx="-4" cy="-45" r="6" fill="#22c55e" />
+              </g>
+            ))}
+          </g>
           {/* Near hills, the same but with taller grass in three greens */}
           <g style={{ filter: grassFilter, transition: 'filter 3s ease-in-out' }}>
-            <path d={NEAR_HILL_GRASS[0]} fill="#16a34a" />
-            <path d={NEAR_HILL_GRASS[1]} fill="#22c55e" />
-            <path d={NEAR_HILL_GRASS[2]} fill="#86efac" />
+            <GrassBlades grass={NEAR_HILL_GRASS[0]} fill="#16a34a" seconds={3.8} />
+            <GrassBlades grass={NEAR_HILL_GRASS[1]} fill="#22c55e" seconds={3.8} />
+            <GrassBlades grass={NEAR_HILL_GRASS[2]} fill="#86efac" seconds={3.8} />
           </g>
           <path
             d="M0 330 L0 300 Q80 265 180 295 T380 290 T580 295 T800 285 L800 330 Z"
@@ -1070,10 +1277,7 @@ function App() {
             mask="url(#landMask)"
           />
           <mask id="landMask">
-            <path
-              d="M0 330 L0 250 L90 170 L170 240 L260 150 L370 250 L450 200 L540 260 L640 160 L740 245 L800 205 L800 330 Z"
-              fill="#ffffff"
-            />
+            <path d={scenery.mountains} fill="#ffffff" />
             <path d="M0 330 L0 270 Q100 215 220 265 T440 260 T660 250 T800 265 L800 330 Z" fill="#ffffff" />
             <path d="M0 330 L0 300 Q80 265 180 295 T380 290 T580 295 T800 285 L800 330 Z" fill="#ffffff" />
           </mask>
@@ -1320,9 +1524,9 @@ function App() {
             aria-label="Grass"
           >
             <path d={GROUND_TUFTS} fill="#15803d" opacity="0.8" />
-            <path d={GROUND_GRASS[0]} fill="#15803d" />
-            <path d={GROUND_GRASS[1]} fill="#22c55e" />
-            <path d={GROUND_GRASS[2]} fill="#4ade80" />
+            <GrassBlades grass={GROUND_GRASS[0]} fill="#15803d" seconds={3.1} />
+            <GrassBlades grass={GROUND_GRASS[1]} fill="#22c55e" seconds={3.1} />
+            <GrassBlades grass={GROUND_GRASS[2]} fill="#4ade80" seconds={3.1} />
           </svg>
         )}
 
@@ -1333,55 +1537,52 @@ function App() {
         {room === BEACH && <Signpost x={8} label="←" />}
 
         {/* Trampoline */}
-        {room === TRAMPOLINE_PLACE && (
-          <svg
-            className="absolute"
-            style={{ transform: `translate(${TRAMPOLINE.x - 6}px, ${TRAMPOLINE.y}px)` }}
-            width="92"
-            height="32"
-            viewBox="0 0 92 32"
-            role="img"
-            aria-label="Trampoline"
-          >
-            {/* Legs */}
-            <g stroke="#475569" strokeWidth="3" strokeLinecap="round">
-              <path d="M12 10 L6 30" />
-              <path d="M80 10 L86 30" />
-              <path d="M46 10 V30" />
-            </g>
-            {/* Springs */}
-            <path
-              d="M10 8 l3 4 l3 -4 l3 4 M73 12 l3 -4 l3 4 l3 -4"
-              stroke="#94a3b8"
-              strokeWidth="1.5"
-              fill="none"
-            />
-            {/* Frame and mat */}
-            <rect x="3" y="3" width="86" height="9" rx="4.5" fill="#2563eb" stroke="#1e3a8a" strokeWidth="1.5" />
-            <rect x="12" y="4.5" width="68" height="4" rx="2" fill="#0f172a" />
-          </svg>
+        {room === TRAMPOLINE_PLACE && <Trampoline {...TRAMPOLINE} />}
+
+        {/* The big cloud high up, half the picture wide, with the rooster on it */}
+        {room === HIGH_SKY && (
+          <>
+            <CloudPlatform {...HIGH_CLOUD} />
+            <Rooster x={ROOSTER_X} y={HIGH_CLOUD.y - 58} facing={1} />
+            <div
+              className="absolute bg-white text-gray-800 text-sm font-semibold px-3 py-1.5 rounded-2xl shadow-md whitespace-nowrap"
+              style={{ left: ROOSTER_X - 20, top: HIGH_CLOUD.y - 102 }}
+              role="note"
+            >
+              Cock-a-doodle-doo!
+              <span
+                className="absolute bg-white"
+                style={{ left: 50, bottom: -5, width: 12, height: 12, transform: 'rotate(45deg)' }}
+              />
+            </div>
+          </>
+        )}
+
+        {/* The next place to the west: more sky, and the big cloud carrying on over the right half */}
+        {room === HIGH_SKY_WEST && (
+          <>
+            <CloudPlatform {...HIGH_WEST_CLOUD} />
+            {/* A heart out in the open air beyond the end of the cloud, to jump out to */}
+            {skyHeart && (
+              <div
+                className="absolute animate-pulse"
+                style={{ transform: `translate(${SKY_HEART.x}px, ${SKY_HEART.y}px)` }}
+              >
+                <Heart
+                  aria-label="Heart to collect"
+                  className="w-8 h-8 text-red-600 fill-red-500 drop-shadow-[0_0_6px_rgba(239,68,68,0.9)]"
+                />
+              </div>
+            )}
+          </>
         )}
 
         {/* The cloud up in the sky, and the blue egg lying on it */}
         {room === SKY && (
           <>
-            <svg
-              className="absolute"
-              style={{ transform: `translate(${SKY_CLOUD.x - 30}px, ${SKY_CLOUD.y - 22}px)` }}
-              width={SKY_CLOUD.width + 60}
-              height="100"
-              viewBox={`0 0 ${SKY_CLOUD.width + 60} 100`}
-              role="img"
-              aria-label="Cloud to stand on"
-            >
-              <g fill="#ffffff" stroke="#bae6fd" strokeWidth="2">
-                <path d="M40 78 Q4 78 6 54 Q8 34 34 34 Q40 16 70 22 Q88 10 112 22 L290 22 Q318 8 344 24 Q372 22 378 42 Q398 46 394 62 Q390 78 360 78 Z" />
-              </g>
-              <g fill="#e0f2fe">
-                <ellipse cx="110" cy="62" rx="46" ry="9" />
-                <ellipse cx="270" cy="66" rx="60" ry="8" />
-              </g>
-            </svg>
+            <CloudPlatform {...SKY_CLOUD} />
+            {/* The second trampoline, which shoots the player up to the big cloud */}
+            <Trampoline {...SKY_TRAMPOLINE} />
             {!doubleCoins && (
               <div
                 className="absolute"
@@ -1411,7 +1612,24 @@ function App() {
                   </div>
                 )
             )}
-            <Shark x={shark.x} y={SHARK.y} dir={shark.dir} />
+            {/* Six little coloured fish that swim about and do no harm */}
+            {SEA_FISH.map(fish => {
+              // Back and forth across the water at its own pace, bobbing gently.
+              const span = WORLD_WIDTH - 30;
+              const travelled = (fish.start + shark.clock * fish.speed) % (span * 2);
+              const goingRight = travelled < span;
+              return (
+                <SmallFish
+                  key={fish.color}
+                  x={goingRight ? travelled : span * 2 - travelled}
+                  y={fish.y + Math.sin(shark.clock * 0.04 + fish.start) * 7}
+                  dir={goingRight ? 1 : -1}
+                  color={fish.color}
+                  stripe={fish.stripe}
+                />
+              );
+            })}
+            <Shark x={shark.x} y={SHARK.y} dir={shark.dir} bite={shark.bite} />
             <p className="absolute bottom-1 inset-x-0 text-center text-xs font-semibold text-sky-100/90 pointer-events-none">
               Swim with the arrow keys · swim up to the surface to get out
             </p>
@@ -1778,13 +1996,44 @@ function App() {
             transform: `translate(${bunny.x}px, ${bunny.y}px) scaleX(${-bunnyFacing})`,
           }}
         >
+          {/* Feet: drawn here so they can step; the picture's own feet are cut off below.
+              The two take turns moving forward and lifting as the bunny walks along. */}
+          <svg
+            className="absolute pointer-events-none"
+            style={{ left: 0, top: 0 }}
+            width="40"
+            height="40"
+            viewBox="0 0 40 40"
+            overflow="visible"
+            aria-hidden="true"
+          >
+            {[
+              { x: 11, phase: 0 },
+              { x: 24, phase: Math.PI },
+            ].map(foot => {
+              const swing = bunny.x * BUNNY_STEP_SPEED + foot.phase;
+              return (
+                <ellipse
+                  key={foot.x}
+                  data-bunny-foot
+                  cx={foot.x + Math.sin(swing) * 3.5}
+                  cy={41 - Math.max(0, Math.cos(swing)) * 3}
+                  rx="6"
+                  ry="3.4"
+                  fill="#f8fafc"
+                  stroke="#1f2937"
+                  strokeWidth="1.6"
+                />
+              );
+            })}
+          </svg>
           {/* Drawn a little larger than the 40×40 hitbox, with the feet on the ground */}
           <img
             src={bunnyImage}
             alt="Bunny"
             draggable={false}
             className="absolute max-w-none select-none"
-            style={{ left: -2, top: -8, width: 44, height: 52 }}
+            style={{ left: -2, top: -8, width: 44, height: 52, clipPath: 'inset(0 0 8% 0)' }}
           />
           {/* Flower tucked into the pink ear */}
           <svg
