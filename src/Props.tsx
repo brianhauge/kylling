@@ -509,6 +509,98 @@ export function MagicBottle() {
   );
 }
 
+/**
+ * The angel, 84×70: a glowing figure with a halo and big wings, seen from the
+ * side and flying level, so that the player can sit on its back. `flap` (-1 to 1)
+ * moves the wings.
+ */
+export function Angel({ x, y, flap }: { x: number; y: number; flap: number }) {
+  return (
+    <svg
+      className="absolute pointer-events-none"
+      style={{ transform: `translate(${x}px, ${y}px)` }}
+      width="84"
+      height="70"
+      viewBox="0 0 84 70"
+      overflow="visible"
+      role="img"
+      aria-label="Angel"
+    >
+      <defs>
+        <radialGradient id="angelGlow">
+          <stop offset="0%" stopColor="#fef9c3" stopOpacity="0.75" />
+          <stop offset="100%" stopColor="#fef9c3" stopOpacity="0" />
+        </radialGradient>
+      </defs>
+      <ellipse cx="42" cy="36" rx="70" ry="52" fill="url(#angelGlow)" />
+      {/* Far wing */}
+      <path
+        d="M40 30 Q30 4 6 0 Q12 14 10 22 Q20 22 40 34 Z"
+        fill="#e0f2fe"
+        stroke="#93c5fd"
+        strokeWidth="1.2"
+        transform={`rotate(${flap * 16} 40 30)`}
+      />
+      {/* Robe: the body lies level, trailing off to the left */}
+      <path
+        d="M62 30 Q44 22 22 30 Q8 34 0 46 Q14 42 24 44 Q44 48 62 42 Z"
+        fill="#ffffff"
+        stroke="#bae6fd"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <path d="M8 42 Q22 36 40 40" fill="none" stroke="#bae6fd" strokeWidth="1.2" />
+      {/* Arm reaching forward, head with hair, and halo */}
+      <path d="M58 38 Q68 42 76 40" fill="none" stroke="#fcd9b6" strokeWidth="4" strokeLinecap="round" />
+      <circle cx="68" cy="27" r="9" fill="#fcd9b6" stroke="#d6a77a" strokeWidth="1" />
+      <path d="M59 26 Q60 15 70 17 Q78 18 77 27 Q72 20 66 22 Q62 22 59 26 Z" fill="#fde047" stroke="#ca8a04" strokeWidth="0.8" />
+      <circle cx="71.5" cy="27" r="1.2" fill="#1f2937" />
+      <path d="M69 31.5 Q72 33.5 75 31.5" fill="none" stroke="#b45309" strokeWidth="0.9" strokeLinecap="round" />
+      <ellipse cx="68" cy="12" rx="9" ry="2.6" fill="none" stroke="#facc15" strokeWidth="2.2" />
+      {/* Near wing */}
+      <path
+        d="M38 32 Q24 2 -4 2 Q4 16 2 26 Q14 24 38 38 Z"
+        fill="#ffffff"
+        stroke="#93c5fd"
+        strokeWidth="1.2"
+        transform={`rotate(${-flap * 20} 38 32)`}
+      />
+    </svg>
+  );
+}
+
+/** The boat, 130 wide: a wooden hull with a mast and a sail. (x, y) is the top-left of the hull's deck. */
+export function Boat({ x, y }: { x: number; y: number }) {
+  return (
+    <svg
+      className="absolute pointer-events-none"
+      style={{ transform: `translate(${x}px, ${y}px)` }}
+      width="130"
+      height="44"
+      viewBox="0 0 130 44"
+      overflow="visible"
+      role="img"
+      aria-label="Boat"
+    >
+      {/* Mast, sail and flag */}
+      <rect x="86" y="-78" width="4" height="80" fill="#78350f" />
+      <path d="M92 -74 L126 -22 H92 Z" fill="#fef3c7" stroke="#b45309" strokeWidth="1.2" strokeLinejoin="round" />
+      <path d="M92 -52 H112 M92 -36 H121" stroke="#f59e0b" strokeWidth="1.2" />
+      <path d="M86 -78 L70 -72 L86 -66 Z" fill="#ef4444" />
+      {/* Hull */}
+      <path
+        d="M0 0 H130 L116 34 Q110 42 98 42 H30 Q18 42 12 34 Z"
+        fill="#b45309"
+        stroke="#78350f"
+        strokeWidth="2"
+        strokeLinejoin="round"
+      />
+      <path d="M0 0 H130 L127 8 H3 Z" fill="#92400e" />
+      <path d="M8 18 H122 M14 30 H116" stroke="#78350f" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
 /** A small wooden signpost with an arrow, standing on the ground at `x`. */
 export function Signpost({ x, label }: { x: number; label: string }) {
   return (

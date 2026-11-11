@@ -3,6 +3,8 @@ import { Egg, Heart } from 'lucide-react';
 import chickImage from './assets/chick.png';
 import { Coin, Shop, Wearables } from './Shop';
 import {
+  Angel,
+  Boat,
   CloudPlatform,
   Coral,
   Fisher,
@@ -168,7 +170,11 @@ const UNDERWATER = 4; // Down in the sea off the beach
 const HIGH_SKY = 5; // Higher up still, reached from the trampoline on the sky cloud
 const HIGH_SKY_WEST = 6; // The next place along the big cloud, out of the left side
 const DEEP_SEA = 7; // More sea, out of the right side of the first one
+const DARK = 8; // The dark place below the hole in the seabed
+const SEA_TOP = 9; // The open sea seen from above the water, with the boat
 type Room =
+  | typeof DARK
+  | typeof SEA_TOP
   | typeof DEEP_SEA
   | typeof HIGH_SKY
   | typeof HIGH_SKY_WEST
@@ -297,7 +303,27 @@ const WADING_SPEED = 2.5; // Top speed in the water (half the normal speed)
 const RAINBOW_MS = 20_000; // Rainbow-coloured, and safe from the bunny, for 20 seconds
 const BREATH_FRAMES = 300; // Under water the head is fully blue after 5 seconds...
 const BREATH_BACK_FRAMES = 90; // ...and normal again 1.5 seconds after coming up
-const MAGIC_BOTTLE: Position = { x: 236, y: 250 }; // In the second sea, above the corals
+// The trip with the angel and the boat.
+const ANGEL_BACK_Y = 250; // Where the player's feet land on the waiting angel
+const ANGEL_SEAT_X = 22; // The player sits this far in from the angel picture's left edge...
+const ANGEL_SEAT_Y = 26; // ...and this far down from its top
+const ANGEL_SPEED = 3; // px per frame while it carries the player
+const ANGEL_DROP_Y = 60; // How high above the sea it lets go
+const BOAT_WIDTH = 130;
+const BOAT_SEAT_X = 44; // Where the player stands in the boat
+const BOAT_DECK_Y = 304; // The player's feet in the boat (it bobs a little around this)
+const BOAT_ACCEL = 0.35;
+const BOAT_DRAG = 0.93; // Top speed works out at about 4.6 px per frame
+const startOfRide = () => ({
+  phase: 'falling' as 'falling' | 'riding' | 'dropped' | 'boat',
+  pause: 0,
+  angelX: 0,
+  angelY: ANGEL_BACK_Y - ANGEL_SEAT_Y,
+  boatX: 500,
+  boatV: 0,
+  clock: 0,
+});
+const MAGIC_BOTTLE: Position ={ x: 236, y: 250 }; // In the second sea, above the corals
 const SUNBURN_OPACITY = 0.75; // How strong the red tint is when fully red
 const SUNBURN_FRAMES = 300; // The head takes 5 seconds to turn fully red at the beach
 const FISHER_X = 290; // The fisher stands on the sand at the water's edge
@@ -464,6 +490,9 @@ function App() {
   const sharkBiteFrames = useRef(0);
   // The heart in the sky beyond the far cloud: it floats there, is carried in
   // the hand once picked up, and ends up given to the rooster.
+  // The trip with the angel and the boat (see the game loop).
+  const rideRef = useRef(startOfRide());
+  const [ride, setRide] = useState(rideRef.current);
   const skyHeartRef = useRef<SkyHeartState>('floating');
   const [skyHeart, setSkyHeart] = useState<SkyHeartState>('floating');
   const [shark, setShark] = useState(sharkRef.current);
@@ -585,7 +614,87 @@ function App() {
       let room: Room = startRoom;
       let nextRoom = room;
       const dir = b.floating ? 0 : (k.right ? 1 : 0) - (k.left ? 1 : 0);
-      if (room === UNDERWATER || room === DEEP_SEA) {
+      if (room === DARK || room === SEA_TOP) {
+        // The trip with the angel: falling through the dark onto its back,
+        // riding it up out of the sea, being dropped onto the boat, and then
+        // sailing the boat. The player only steers once in the boat.
+        const ride = rideRef.current;
+        ride.clock += 1;
+        b.vx = 0;
+        b.platform = null;
+        b.floating = false;
+        b.flip = 0;
+        k.jumpPressed = false;
+        if (ride.phase === 'falling') {
+          b.vy = Math.min(b.vy + GRAVITY, 8);
+          b.y += b.vy;
+          b.onGround = false;
+          if (b.y + PLAYER_SIZE >= ANGEL_BACK_Y) {
+            b.y = ANGEL_BACK_Y - PLAYER_SIZE;
+            b.vy = 0;
+            ride.phase = 'riding';
+            ride.pause = 40; // A moment on the angel's back before it takes off
+          }
+        } else if (ride.phase === 'riding') {
+          b.onGround = true;
+          if (ride.pause > 0) {
+            ride.pause -= 1;
+          } else if (room === DARK) {
+            b.y -= ANGEL_SPEED;
+            if (b.y < -PLAYER_SIZE - 50) {
+              // Up out of the dark and out of the sea, into the open air above it.
+              nextRoom = SEA_TOP;
+              room = nextRoom;
+              b.y = WORLD_HEIGHT;
+            }
+          } else {
+            // Above the sea: up to dropping height, and sideways to above the boat.
+            const targetX = ride.boatX + BOAT_SEAT_X;
+            b.y = Math.max(ANGEL_DROP_Y, b.y - ANGEL_SPEED);
+            b.x += Math.max(-ANGEL_SPEED, Math.min(ANGEL_SPEED, targetX - b.x));
+            if (b.y === ANGEL_DROP_Y && Math.abs(targetX - b.x) < 1) {
+              ride.phase = 'dropped';
+              b.onGround = false;
+            }
+          }
+          ride.angelX = b.x - ANGEL_SEAT_X;
+          ride.angelY = b.y + PLAYER_SIZE - ANGEL_SEAT_Y;
+        } else {
+          // The angel has let go: it flies off upwards.
+          ride.angelY -= ANGEL_SPEED * 1.5;
+          const bob = Math.sin(ride.clock * 0.05) * 3;
+          if (ride.phase === 'dropped') {
+            b.vy += GRAVITY;
+            b.y += b.vy;
+            if (b.y + PLAYER_SIZE >= BOAT_DECK_Y + bob) {
+              ride.phase = 'boat';
+              b.vy = 0;
+            }
+          }
+          if (ride.phase === 'boat') {
+            // In the boat the arrow keys sail it to and fro.
+            ride.boatV = (ride.boatV + dir * BOAT_ACCEL) * BOAT_DRAG;
+            ride.boatX += ride.boatV;
+            if (dir !== 0) b.facing = dir;
+            if (ride.boatX < 0 && dir < 0) {
+              // Sailing out of the left side lands the player back at the beach.
+              nextRoom = BEACH;
+              room = nextRoom;
+              b.x = WORLD_WIDTH - PLAYER_SIZE;
+              b.y = GROUND_LEVEL;
+              b.onGround = true;
+            } else {
+              ride.boatX = Math.max(0, Math.min(WORLD_WIDTH - BOAT_WIDTH, ride.boatX));
+              if (ride.boatX === 0 || ride.boatX === WORLD_WIDTH - BOAT_WIDTH) ride.boatV = 0;
+              b.x = ride.boatX + BOAT_SEAT_X;
+              b.y = BOAT_DECK_Y + bob - PLAYER_SIZE;
+              b.onGround = true;
+            }
+          }
+        }
+        if (ride.phase === 'falling') ride.angelY = ANGEL_BACK_Y - ANGEL_SEAT_Y;
+        setRide({ ...ride });
+      } else if (room === UNDERWATER || room === DEEP_SEA) {
         // Swimming: the arrow keys push in all four directions, the water
         // slows the player down again, and there is no gravity.
         const vertical = (k.down ? 1 : 0) - (k.jump ? 1 : 0);
@@ -626,8 +735,14 @@ function App() {
             }
           }
           if (b.y > SEA_HOLE_BOTTOM_Y) {
-            b.y = SEA_HOLE_BOTTOM_Y;
-            b.vy = 0;
+            // Going down to the bottom of the hole means falling through
+            // into the dark place below, where the angel waits.
+            nextRoom = DARK;
+            room = nextRoom;
+            b.y = -PLAYER_SIZE;
+            b.vx = 0;
+            b.vy = 2;
+            rideRef.current = { ...startOfRide(), angelX: b.x - ANGEL_SEAT_X };
           }
         } else if (b.y > SEABED_Y) {
           b.y = SEABED_Y;
@@ -1135,6 +1250,8 @@ function App() {
     sharkBiteFrames.current = 0;
     skyHeartRef.current = 'floating';
     setSkyHeart('floating');
+    rideRef.current = startOfRide();
+    setRide(rideRef.current);
     sharkRef.current = { x: 500, dir: -1, bite: 0, clock: 0 };
     setShark(sharkRef.current);
     seaCoinBackAt.current = SEA_COINS.map(() => 0);
@@ -1573,6 +1690,9 @@ function App() {
           </svg>
         )}
 
+        {/* The dark place below the hole in the seabed: nothing but black (and the angel) */}
+        {room === DARK && <div className="absolute inset-0 bg-black" role="img" aria-label="Dark place" />}
+
         {/* Score */}
         <div className="absolute top-4 left-4 flex items-center gap-2">
           <div className="bg-white px-4 py-2 rounded-full shadow-md">
@@ -1793,6 +1913,54 @@ function App() {
               Swim with the arrow keys · swim up to the surface to get out
             </p>
           </>
+        )}
+
+        {/* Above the open sea: the water, and the boat riding on it */}
+        {room === SEA_TOP && (
+          <>
+            <svg
+              className="absolute pointer-events-none"
+              style={{ left: 0, top: 300 }}
+              width="800"
+              height="100"
+              viewBox="0 0 800 100"
+              role="img"
+              aria-label="Open sea"
+            >
+              <defs>
+                <linearGradient id="openSea" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#0ea5e9" />
+                  <stop offset="100%" stopColor="#1e3a8a" />
+                </linearGradient>
+              </defs>
+              <rect y="14" width="800" height="86" fill="url(#openSea)" />
+              {/* Waves rolling slowly sideways */}
+              <g fill="#0ea5e9">
+                <path d="M-80 16 Q-60 4 -40 16 T0 16 T40 16 T80 16 T120 16 T160 16 T200 16 T240 16 T280 16 T320 16 T360 16 T400 16 T440 16 T480 16 T520 16 T560 16 T600 16 T640 16 T680 16 T720 16 T760 16 T800 16 T840 16 T880 16 V30 H-80 Z">
+                  <animateTransform
+                    attributeName="transform"
+                    type="translate"
+                    from="0 0"
+                    to="80 0"
+                    dur="4s"
+                    repeatCount="indefinite"
+                  />
+                </path>
+              </g>
+            </svg>
+            {/* The deck sits just under the player's feet, bobbing with the waves */}
+            <Boat x={ride.boatX} y={BOAT_DECK_Y + 4 + Math.sin(ride.clock * 0.05) * 3} />
+            {ride.phase === 'boat' && (
+              <p className="absolute bottom-1 inset-x-0 text-center text-xs font-semibold text-sky-100 pointer-events-none">
+                Steer the boat with ← → · sail out to the left to reach the beach
+              </p>
+            )}
+          </>
+        )}
+
+        {/* The angel: waiting in the dark, carrying the player, or flying off again */}
+        {(room === DARK || room === SEA_TOP) && ride.angelY > -90 && (
+          <Angel x={ride.angelX} y={ride.angelY} flap={Math.sin(ride.clock * 0.18)} />
         )}
 
         {/* Further out in the sea: a turtle, more fish, frogs and a herring. None of them do any harm. */}
